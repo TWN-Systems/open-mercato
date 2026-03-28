@@ -4,6 +4,7 @@
 **Status:** Draft
 **Scope:** OSS
 **Author:** Claude
+**Related:** SPEC-040 (Document Parser), SPEC-045 (Integration Marketplace), SPEC-045a (Payment/Shipping Hubs), SPEC-047 (Sales Document Detail Pages)
 
 ---
 
@@ -83,6 +84,17 @@ packages/storage-papra/                  ← Papra storage provider
 packages/sign-documentso/                ← Documentso signing provider
 packages/sign-docuseal/                  ← Docuseal signing provider
 ```
+
+---
+
+## Integration Marketplace
+
+Provider packages register in the OM Integration Marketplace via their `integration.ts` files:
+
+- `storage-papra` appears under category `storage` at `/backend/integrations` (hub: `document_storage`).
+- `sign-documentso` and `sign-docuseal` appear under category `signing` (hub: `document_signing`).
+
+Each integration entry displays the standard health check status, operation log timeline, and credentials form (base URL + API key). The hub module (`documents`) itself is **not** an integration — it is a core module that depends on registered providers via `StorageRegistry` and `SigningRegistry`.
 
 ---
 
@@ -311,6 +323,12 @@ src/modules/sign_docuseal/
     preset.ts                 ← env: DOCUSEAL_URL, DOCUSEAL_API_KEY
 ```
 
+### Sequential Signing
+
+When `signing_order` is set on `DocumentSigner` records, the hub enforces sequential dispatch. After each `signer.signed` webhook event, `webhook-processor.ts` calls `DocumentService.advanceSigningQueue(documentId)`, which finds the next signer by `signing_order` (the lowest order value among signers still in `pending` status). It then calls `signingProvider.getSigningUrl(envelopeId, nextSigner.email)` and dispatches a `documents.signature_requested` notification to that signer.
+
+If `signing_order` is `null` on all signers, all signing URLs are dispatched simultaneously when `POST /api/documents/:id/send` is called.
+
 ---
 
 ## Events
@@ -413,6 +431,8 @@ sequenceDiagram
 | `DOCUSEAL_URL` | sign-docuseal | Yes |
 | `DOCUSEAL_API_KEY` | sign-docuseal | Yes |
 
+> These env vars provide deployment-time defaults via `preset.ts` (applied from `setup.ts`). Per-tenant overrides are configured via the OM Integration Marketplace credentials UI at `/backend/integrations/documents_storage` and `/backend/integrations/documents_signing`. Env vars are the fallback for single-tenant deployments; the credentials UI takes precedence when set.
+
 ---
 
 ## API Routes & OpenAPI Coverage
@@ -429,10 +449,14 @@ All routes export `openApi`. All write routes use `makeCrudRoute` where applicab
 | POST | `/api/documents/:id/send` | Send for signature |
 | POST | `/api/documents/:id/archive` | Archive to Papra |
 | GET | `/api/documents/:id/download` | Download PDF |
-| GET | `/api/documents/:id/signing-url` | Get signer URL for a given email |
+| GET | `/api/documents/:id/signing-url` | Get signer URL for a given email. From the portal: enforces `requireCustomerAuth` + `requireCustomerFeatures(['documents.sign'])`. From the backend: enforces `requireAuth` + `requireFeatures(['documents.sign'])`. The route resolves which guard to apply based on the request's auth context. |
 | POST | `/api/documents/:id/cancel` | Cancel envelope |
 | GET | `/api/documents/templates` | List templates from active signing provider |
 | POST | `/api/documents/webhooks/:provider` | Inbound webhook receiver (Documentso / Docuseal) |
+
+### Document Creation
+
+`POST /api/documents` accepts multipart form data. The source PDF is provided as the `file` field (`application/pdf`, multipart). The route also accepts a `sourceEntityType` + `sourceEntityId` pair for PDF generation from a quote or order (reserved for a future phase — not implemented in Phase 1). **For Phase 1, file upload is the only supported creation method.**
 
 ---
 

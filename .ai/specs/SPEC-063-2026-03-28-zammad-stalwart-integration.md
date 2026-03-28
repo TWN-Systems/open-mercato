@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | Draft |
 | **Created** | 2026-03-28 |
-| **Related** | SPEC-045 (Integration Marketplace), SPEC-045a (Foundation), SPEC-045b (Data Sync Hub), SPEC-045d (Communication Hub), SPEC-043 (Reactive Notification Handlers) |
+| **Related** | SPEC-045 (Integration Marketplace), SPEC-045a (Integration Foundation), SPEC-045b (Data Sync Hub), SPEC-045d (Communication Hub), SPEC-043 (Reactive Notification Handlers) |
 
 ---
 
@@ -171,8 +171,8 @@ interface ZammadCredentials {
   }
 
   fieldOwnership: {
-    omOwned: string[]               // fields OM pushes to Zammad e.g. ["note", "account_owner_id"]
-    zammadOwned: string[]           // fields Zammad pushes to OM e.g. ["support_tier", "sla_group"]
+    omOwned: string[]               // Zammad customer field keys that OM writes (e.g. ["note", "custom_field_123"]) — OM maps its values to these keys before PUT
+    zammadOwned: string[]           // Zammad customer field keys that Zammad owns — incoming webhook updates only these fields on the OM contact
   }
 }
 ```
@@ -246,6 +246,15 @@ Headers: X-Hub-Signature: sha256=<hmac-sha256>
 | Create ticket | `POST /api/v1/tickets` | bounce workflow (no existing ticket) |
 | Create ticket article (note) | `POST /api/v1/ticket_articles` | bounce workflow step 4 |
 
+### Contact Sync Subscriber (`subscribers/sync-contact-to-zammad.ts`)
+
+- Events: `customers.contact.created`, `customers.contact.updated` (persistent)
+- On each event, loads `zammadCredentials.fieldOwnership.omOwned` for the tenant
+- Fetches the OM contact record
+- Looks up `zammad_contact_link` for the contact — if no link exists, calls `POST /api/v1/customers` to create the Zammad customer and stores the link; if link exists, calls `PUT /api/v1/customers/{zammadCustomerId}` with only the `omOwned` fields
+- `omOwned` field names are Zammad customer field keys (e.g. `"note"`, `"organization"`) — OM field values are mapped to these keys before the outbound call
+- Errors (Zammad 4xx/5xx) are logged to IntegrationLog and do not throw (fire-and-forget with retry via queue)
+
 ### Health Check
 
 `GET /api/v1/users/me` — verifies token. Result displayed on integration card as "Connected as: {login}" using the agent identity returned by Zammad.
@@ -270,6 +279,29 @@ Injected into the customer detail page via `widgets/injection/` targeting the `c
 - "New Ticket" opens a dialog: subject input + group selector → `POST /api/v1/tickets`
 - Widget renders "Link to Zammad" prompt if no `zammad_contact_link` exists for the contact
 - Data loaded via `apiCall` from a backend route in the provider package
+
+### Timeline Widget Backend Route
+
+```
+GET /api/integrations/zammad/contacts/[omContactId]/tickets
+Auth: requireAuth + requireFeatures(['zammad.view'])
+Response: {
+  tickets: Array<{
+    id: number
+    subject: string
+    state: 'open' | 'closed' | 'pending'
+    groupId: number
+    queueLabel: string
+    color?: string
+    updatedAt: string
+    zammadUrl: string   // deep link into Zammad
+  }>
+  total: number
+}
+Pagination: ?page=1&pageSize=20 (max 20)
+```
+
+Fetches open and recently closed tickets from Zammad for the resolved `zammadCustomerId`, enriches each with `queueLabel` and `color` from `groupMappings`, returns paginated results. The widget loads this route via `apiCall`.
 
 ---
 
