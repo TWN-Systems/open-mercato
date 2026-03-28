@@ -1,0 +1,56 @@
+{
+  "target": "http://10.0.64.14:3000",
+  "date": "2026-03-28T00:40:28.042Z",
+  "attacker_level": "Authenticated user with ai_assistant.view (admin role)",
+  "findings_confirmed": {
+    "F03 - Missing Security Headers": {
+      "severity": "Medium",
+      "confirmed": true,
+      "method": "HTTP response headers check",
+      "missing": [
+        "x-frame-options",
+        "x-content-type-options",
+        "strict-transport-security",
+        "content-security-policy",
+        "referrer-policy",
+        "permissions-policy"
+      ]
+    },
+    "RC1 - Quote TOCTOU Race Condition": {
+      "severity": "Medium",
+      "confirmed": true,
+      "method": "Concurrent HTTP requests + app logs (UniqueConstraintViolationException ×2)"
+    },
+    "F01 - SSRF via CALL_WEBHOOK": {
+      "severity": "Critical",
+      "confirmed": true,
+      "method": "Workflow execution — Meilisearch response in workflow context + Meilisearch access log"
+    },
+    "A1 - File Upload OOM": {
+      "severity": "High",
+      "confirmed": true,
+      "method": "20MB upload accepted HTTP 200, no size check before arrayBuffer()"
+    },
+    "A3 - Unbounded Workflow List": {
+      "severity": "Medium",
+      "confirmed": true,
+      "method": "limit=999999 accepted in pagination response"
+    },
+    "NEW-01 - vm Sandbox Escape": {
+      "severity": "Critical (v0.4.9)",
+      "confirmed": "code+local",
+      "method": "Promise.resolve().constructor.constructor(\"return require(\"child_process\")...\") confirmed on Node 22.22.0"
+    },
+    "NEW-02 - chown Sudoers Priv-Esc": {
+      "severity": "High (post-RCE)",
+      "confirmed": true,
+      "method": "omuser ALL=(root) NOPASSWD: /bin/chown → write sudoers → root in container"
+    }
+  },
+  "not_confirmed_on_this_instance": {
+    "NEW-01 via browser": "OpenCode not deployed — AI Code Mode not accessible via UI on this box",
+    "F02 - Credentials GET": "No integrations configured in test env",
+    "RC2 - Session token flood": "AI assistant route returns 404 on this instance"
+  },
+  "screenshots": "/home/ctown/website-projects/test/open-mercato/.ai/security/evidence/screenshots"
+}

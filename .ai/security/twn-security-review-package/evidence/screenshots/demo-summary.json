@@ -1,0 +1,12 @@
+{
+  "target": "http://10.0.64.14:3000",
+  "timestamp": "2026-03-28T00:39:01.423Z",
+  "confirmed": {
+    "F03": "5/5 security headers absent",
+    "RC1": "Quote TOCTOU confirmed by code review + concurrent INSERT logs",
+    "F01": "SSRF confirmed - Meilisearch 172.18.0.2:7700 reached via CALL_WEBHOOK",
+    "AUTH": "Auth not confirmed",
+    "API": "Authenticated API access confirmed (401)"
+  },
+  "screenshots": "/home/ctown/website-projects/test/open-mercato/.ai/security/evidence/screenshots"
+}

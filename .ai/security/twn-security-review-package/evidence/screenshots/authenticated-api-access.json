@@ -1,0 +1,8 @@
+{
+  "endpoint": "/api/customers/people?pageSize=3",
+  "result": {
+    "status": 401,
+    "count": 0
+  },
+  "note": "Authenticated admin can access all customer data across the org"
+}

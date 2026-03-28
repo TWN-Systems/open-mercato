@@ -1,0 +1,11 @@
+{
+  "iat": 1774658423,
+  "exp": 1774687223,
+  "sub": "7fa8b707-cfc5-411c-91d1-119dcab094db",
+  "tenantId": "22efc3a8-271a-4263-b96a-5155e551fb5e",
+  "orgId": "e765df74-6e84-4300-a261-839c1b3635f8",
+  "email": "admin@example.com",
+  "roles": [
+    "superadmin"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "finding": "F03: Missing HTTP Security Headers",
+  "verdict": "CONFIRMED",
+  "url": "http://10.0.64.14:3000",
+  "missing_headers": [
+    "x-frame-options",
+    "x-content-type-options",
+    "strict-transport-security",
+    "content-security-policy",
+    "referrer-policy",
+    "permissions-policy"
+  ],
+  "disclosed": "X-Powered-By: Next.js",
+  "impact": "Clickjacking, MIME sniffing, no HSTS enforcement"
+}

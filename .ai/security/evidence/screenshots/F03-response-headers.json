@@ -1,0 +1,11 @@
+{
+  "missing": [
+    "x-frame-options",
+    "x-content-type-options",
+    "strict-transport-security",
+    "content-security-policy",
+    "referrer-policy"
+  ],
+  "present": {},
+  "x-powered-by": "Next.js"
+}

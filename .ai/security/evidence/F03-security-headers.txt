@@ -1,0 +1,38 @@
+================================================================
+ F03: Missing HTTP Security Headers — CONFIRMED
+ Target: http://10.0.64.14:3000
+ Timestamp: 2026-03-25T15:39:06Z
+================================================================
+
+Command: curl -sI http://10.0.64.14:3000/
+
+HTTP/1.1 200 OK
+Vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding
+link: </_next/static/media/797e433ab948586e-s.p.dbea232f.woff2>; rel=preload; as="font"; crossorigin=""; type="font/woff2", </_next/static/media/caa3a2e1cccd8315-s.p.853070df.woff2>; rel=preload; as="font"; crossorigin=""; type="font/woff2", </_next/static/chunks/a1b606f685345955.css>; rel=preload; as="style", </_next/static/chunks/876f0aa821c3e649.css>; rel=preload; as="style"
+X-Powered-By: Next.js
+Cache-Control: private, no-cache, no-store, max-age=0, must-revalidate
+Content-Type: text/html; charset=utf-8
+Date: Wed, 25 Mar 2026 15:39:25 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+
+Security header audit:
+  [MISSING] x-frame-options
+  [MISSING] x-content-type-options
+  [MISSING] strict-transport-security
+  [MISSING] referrer-policy
+  [MISSING] permissions-policy
+  [MISSING] content-security-policy
+
+Additional: X-Powered-By disclosure
+X-Powered-By: Next.js
+
+RESULT: CONFIRMED — 5/6 security headers absent
+  Clickjacking possible (no X-Frame-Options)
+  MIME sniffing possible (no X-Content-Type-Options)
+  HTTPS not enforced on first visit (no HSTS)
+  Version disclosed: X-Powered-By: Next.js
+
+REMEDIATION: Add headers() to apps/mercato/next.config.ts
+================================================================

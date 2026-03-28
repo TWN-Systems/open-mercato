@@ -1,0 +1,10 @@
+{
+  "finding": "Authenticated admin API access",
+  "endpoint": "/api/auth/users",
+  "result": {
+    "status": 200,
+    "total": 4,
+    "items": 4
+  },
+  "note": "Full access to all users with admin JWT"
+}

@@ -1,0 +1,29 @@
+================================================================
+ A3: Workflow Instances Unbounded Limit — CONFIRMED
+ Target: http://10.0.64.14:3000
+ Timestamp: 2026-03-25T15:41:50Z
+================================================================
+
+Command: GET /api/workflows/instances?limit=999999
+
+Response:
+        "total": 2,
+        "limit": 999999,
+        "hasMore": false
+
+Server accepted limit=999999 in pagination response:
+  limit: 999999
+  total: 2
+  hasMore: False
+
+RESULT: CONFIRMED — No maximum enforced on limit parameter
+        With a populated DB, this loads ALL workflow instances into memory
+        Unlike CRUD routes which cap at 100, this is a raw ORM query
+
+AFFECTED CODE:
+  packages/core/src/modules/workflows/api/instances/route.ts:59
+  const limit = parseInt(searchParams.get('limit') || '50')  // no Math.min cap
+
+REMEDIATION:
+  const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 100)
+================================================================

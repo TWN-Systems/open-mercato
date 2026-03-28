@@ -1,0 +1,33 @@
+================================================================
+ F17: Meilisearch Network Exposure
+ Target: http://10.0.63.14:7700
+ Timestamp: 2026-03-25T15:20:28Z
+================================================================
+
+--- Test 1: Port reachability ---
+Command: curl -s http://10.0.63.14:7700/health
+Response: {"status":"available"}
+HTTP: 200
+
+RESULT: CONFIRMED — Meilisearch is NETWORK-ACCESSIBLE on port 7700
+IMPACT: Any host that can reach 10.0.63.14:7700 can attempt to authenticate
+        Meilisearch should be bound to localhost or protected by firewall
+
+--- Test 2: Default master key ('meilisearch-dev-key') ---
+Command: curl -s http://10.0.63.14:7700/indexes -H 'Authorization: Bearer meilisearch-dev-key'
+Response: {"message":"The provided API key is invalid.","code":"invalid_api_key","type":"auth","link":"https://docs.meilisearch.com/errors#invalid_api_key"}
+HTTP: 403
+
+RESULT: PARTIAL — Port is open but default key rejected (custom key set)
+IMPACT: Port 7700 is still publicly accessible — should be firewalled
+        Brute-forcing or credential leaks could still expose all indexed data
+
+--- Summary ---
+Port accessible: true
+Default key works: No
+
+Remediation:
+  1. Firewall port 7700 — never expose Meilisearch to the network
+  2. Set a strong random MEILISEARCH_MASTER_KEY in .env
+  3. docker-compose.yml default is 'meilisearch-dev-key' — change it
+================================================================

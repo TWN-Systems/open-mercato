@@ -1,0 +1,138 @@
+================================================================
+ OPEN MERCATO SECURITY AUDIT — MASTER FINDINGS INDEX
+ Target: http://10.0.64.14:3000
+ Date: 2026-03-25
+================================================================
+
+LEGEND:
+  CONFIRMED   = Exploited / demonstrated live on target
+  VERIFIED    = Behaviour confirmed live but not fully exploited
+  CODE        = Code-only evidence (no live test feasible or needed)
+  NOT APPLICABLE = Not present in this deployment
+  MITIGATED   = Partially mitigated by other controls
+
+================================================================
+ CONFIRMED LIVE FINDINGS
+================================================================
+
+F01 | SSRF via CALL_WEBHOOK                               | CONFIRMED CRITICAL
+     Target: Meilisearch at 172.18.0.2:7700 (Docker internal)
+     Evidence: Workflow context contains {"status":"available"} from Meilisearch
+     Meilisearch log: user_agent=node, host=172.18.0.2:7700, status=200
+     File: activity-executor.ts:611
+
+F03 | Missing HTTP security headers                       | CONFIRMED MEDIUM
+     All 6 tested headers absent from every response
+     X-Powered-By: Next.js disclosed (version fingerprinting)
+     Evidence: curl -sI http://10.0.64.14:3000/ — raw headers captured
+
+RC1 | Quote acceptance TOCTOU                             | CONFIRMED MEDIUM
+     20 concurrent requests, 2x UniqueConstraintViolationException in app logs
+     Both at 2026-03-25T15:49:23.037Z and .044Z (7ms apart)
+     Token generated via POST /api/sales/quotes/send — clean test
+     File: quotes/accept/route.ts:41-68
+
+A3  | Workflow instances unbounded limit=999999           | CONFIRMED MEDIUM
+     Server accepted and returned limit:999999 in pagination response
+     File: workflows/api/instances/route.ts:59
+
+A1  | File upload no size limit (20MB accepted)           | CONFIRMED HIGH
+     HTTP 200 on 20MB binary upload — full file buffered in RAM
+     File: attachments/api/route.ts:263
+
+A8  | Search reindex no cooldown                          | CONFIRMED LOW
+     POST /api/search/reindex HTTP 200 — no rate limit, no cooldown
+
+================================================================
+ VERIFIED (LIVE TEST CONFIRMS BEHAVIOUR, NOT FULLY EXPLOITED)
+================================================================
+
+F12 | Password minimum 6 chars accepted                   | VERIFIED LOW
+     Created user with 'Aa1!56' — HTTP 200, user created
+     Mitigated by bcrypt cost 10 + rate limiting
+
+F08 | GitHub Actions unpinned (9 mutable tags)            | VERIFIED MEDIUM
+     release.yml, qa-deploy.yml: all @v4/@v6/@v7/@v8 — no SHA pinning
+     affects: NPM_TOKEN, DOKPLOY_API_KEY in release/deploy workflows
+
+A6  | Attachment library returns array with no pagination | VERIFIED LOW
+     Response is raw array, no total/pagination envelope
+
+A7  | SSE no per-user connection limit                    | VERIFIED MEDIUM
+     5 concurrent SSE connections from one user — service remains up
+     Service healthy with 5 open connections (fd impact at scale)
+
+================================================================
+ CODE EVIDENCE ONLY (no live test required or feasible)
+================================================================
+
+F04 | next@16.1.5 CVEs (GHSA-mq59-m269-xvcx, GHSA-ggv3-7p47-pfv8) | NOT APPLICABLE
+     0 Server Actions in codebase. 0 rewrite rules configured.
+     CVEs not exploitable in this deployment.
+
+F05 | MCP server 0.0.0.0 binding                         | NOT APPLICABLE
+     Port 3001 not listening in production. Dev-only concern.
+
+F06 | Session token in AI system prompt                   | NOT APPLICABLE
+     AI assistant not running in this deployment (/api/chat 404)
+
+F07 | API key timing attack (mcp-dev-server)              | NOT APPLICABLE
+     Dev server only. Not running in production.
+
+F09 | Docker base image floating tag                      | CODE LOW
+     FROM node:24-alpine — not pinned to digest. Build-time risk only.
+
+F10 | Business rules no pre-ownership check               | CODE LOW
+     Rule execution returns 404 for unknown ID — engine likely scopes by tenant
+     No cross-tenant execution demonstrated
+
+F11 | Offers enrichment without tenant filter             | CODE THEORETICAL
+     Requires orphaned records from separate data integrity failure
+
+F13 | Bulk delete IDs without pre-check                   | CODE LOW
+     Worker re-checks ownership via scope — defence-in-depth gap only
+
+F14 | Public quote token design                           | CODE DESIGN
+     Token only in email, not in API response. By-design for public quote sharing.
+
+F15 | call_api MCP defers ACL downstream                  | CODE DESIGN
+     By design — each downstream endpoint has own auth checks
+
+F16 | CALL_API creates admin one-time key                 | CODE DESIGN
+     0 one-time keys in DB — deleted after use. Acceptable by design.
+
+F18 | glob@11.1.0 deprecation                             | CODE INFO
+     No CVE. Advisory only.
+
+P1  | Customer JWT → backend API                          | CODE BLOCKED
+     getAuthFromRequest() rejects type='customer' — verified in source
+
+P2  | Employee → admin escalation                         | CODE BLOCKED
+     No roles field in profile schema. Feature-gated role assignment.
+
+RC2 | Session token flood → table scan degradation        | CODE MEDIUM
+     @Index missing on sessionToken column. No rate limit on /api/chat (404 in 
+     this deployment — AI assistant not configured). Code path confirmed.
+
+RC3 | Message token replay race                           | CODE MEDIUM
+     Same TOCTOU pattern as RC1 (confirmed). No lock on useCount check.
+     No test messages with tokens in this environment.
+
+S1  | Shell injection via markitdown execFile             | CODE SAFE
+     execFile with array args. Filename sanitised to [a-zA-Z0-9._-]. Safe.
+
+S2  | SQL injection via raw Knex                          | CODE SAFE
+     All whereRaw: hardcoded strings or parameterized '?'. No interpolation.
+
+================================================================
+ SUMMARY COUNTS
+================================================================
+
+CONFIRMED (live):    6  (F01, F03, RC1, A1, A3, A8)
+VERIFIED (live):     4  (F08, F12, A6, A7)
+CODE EVIDENCE:       14 (F04/F05/F06/F07/F09-F16/F18/P1/P2/S1/S2)
+NOT APPLICABLE:      4  (F04, F05, F06, F07 in this deployment)
+DESIGN CHOICES:      3  (F14, F15, F16)
+BLOCKED/SAFE:        4  (P1, P2, S1, S2)
+
+================================================================

