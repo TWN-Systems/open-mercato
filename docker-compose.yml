@@ -67,7 +67,7 @@ services:
       MEILI_MASTER_KEY: ${MEILISEARCH_MASTER_KEY:-meilisearch-dev-key}
       MEILI_NO_ANALYTICS: "true"
     ports:
-      - "${MEILISEARCH_PORT:-7700}:7700"
+      - "127.0.0.1:${MEILISEARCH_PORT:-7700}:7700"
     volumes:
       - meilisearch_data:/meili_data
     healthcheck:
