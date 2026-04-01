@@ -120,3 +120,8 @@ docker/opencode/opencode.jsonc
 .ai/qa/ephemeral*
 .ai/dev-ephemeral-envs.json
 .agents/
+
+# Security review package (private disclosure docs, PDFs, PoC exploit scripts)
+.ai/security/twn-security-review-package.zip
+.ai/security/twn-security-review-package/pdf/
+.ai/security/twn-security-review-package/evidence/poc/

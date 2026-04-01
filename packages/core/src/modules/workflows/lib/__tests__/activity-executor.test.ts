@@ -548,6 +548,130 @@ describe('Activity Executor (Unit Tests)', () => {
   })
 
   // ============================================================================
+  // CALL_WEBHOOK SSRF Prevention Tests (security: F01)
+  // ============================================================================
+
+  describe('CALL_WEBHOOK SSRF prevention', () => {
+    const privateUrls = [
+      'http://127.0.0.1:7700/health',
+      'http://localhost:3000/internal',
+      'http://localhost./internal',                                      // trailing-dot FQDN bypass
+      'http://10.0.0.1/admin',
+      'http://10.255.255.255/api',
+      'http://192.168.1.1/router',
+      'http://172.16.0.1/service',
+      'http://172.31.255.255/service',
+      'http://169.254.169.254/latest/meta-data/iam/security-credentials/',
+      'http://0.0.0.0/anything',
+      'http://[::1]/ipv6-localhost',
+      'http://[::ffff:127.0.0.1]/loopback',                             // IPv6-mapped IPv4 loopback
+      'http://[::ffff:10.0.0.1]/private',                               // IPv6-mapped RFC-1918
+      'http://[::ffff:192.168.1.1]/private',                            // IPv6-mapped RFC-1918
+      'http://[::ffff:169.254.169.254]/latest/meta-data/iam/security-credentials/', // IPv6-mapped link-local
+    ]
+
+    test.each(privateUrls)('should reject CALL_WEBHOOK targeting private address: %s', async (url) => {
+      const activity: ActivityDefinition = {
+        activityId: 'ssrf-test',
+        activityName: 'SSRF Attempt',
+        activityType: 'CALL_WEBHOOK',
+        config: { url, method: 'GET' },
+      }
+
+      const result = await activityExecutor.executeActivity(
+        mockEm,
+        mockContainer,
+        activity,
+        mockContext
+      )
+
+      expect(result.success).toBe(false)
+      expect(result.error).toMatch(/private|reserved|SSRF/i)
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    test('should reject non-HTTP/HTTPS protocols', async () => {
+      const activity: ActivityDefinition = {
+        activityId: 'ssrf-proto-test',
+        activityName: 'Protocol Attack',
+        activityType: 'CALL_WEBHOOK',
+        config: { url: 'file:///etc/passwd', method: 'GET' },
+      }
+
+      const result = await activityExecutor.executeActivity(
+        mockEm,
+        mockContainer,
+        activity,
+        mockContext
+      )
+
+      expect(result.success).toBe(false)
+      expect(result.error).toMatch(/http|protocol/i)
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    test('should allow external public URLs', async () => {
+      ;(global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: jest.fn().mockResolvedValue({ ok: true }),
+      })
+
+      const activity: ActivityDefinition = {
+        activityId: 'public-webhook',
+        activityName: 'Public Webhook',
+        activityType: 'CALL_WEBHOOK',
+        config: { url: 'https://hooks.slack.com/services/T0123/B0123/abc', method: 'POST' },
+      }
+
+      const result = await activityExecutor.executeActivity(
+        mockEm,
+        mockContainer,
+        activity,
+        mockContext
+      )
+
+      expect(result.success).toBe(true)
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://hooks.slack.com/services/T0123/B0123/abc',
+        expect.any(Object)
+      )
+    })
+
+    test('should allow private URLs when WORKFLOW_WEBHOOK_ALLOW_PRIVATE_URLS=true', async () => {
+      process.env.WORKFLOW_WEBHOOK_ALLOW_PRIVATE_URLS = 'true'
+
+      ;(global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: jest.fn().mockResolvedValue({ status: 'available' }),
+      })
+
+      const activity: ActivityDefinition = {
+        activityId: 'internal-webhook',
+        activityName: 'Internal Webhook',
+        activityType: 'CALL_WEBHOOK',
+        config: { url: 'http://internal-service/health', method: 'GET' },
+      }
+
+      const result = await activityExecutor.executeActivity(
+        mockEm,
+        mockContainer,
+        activity,
+        mockContext
+      )
+
+      expect(result.success).toBe(true)
+
+      delete process.env.WORKFLOW_WEBHOOK_ALLOW_PRIVATE_URLS
+    })
+  })
+
+  // ============================================================================
   // EXECUTE_FUNCTION Activity Tests
   // ============================================================================
 

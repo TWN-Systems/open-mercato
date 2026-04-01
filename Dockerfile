@@ -77,8 +77,8 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 # Install only production system dependencies (Alpine uses apk)
-# sudo: allows non-root user to chown the Railway-mounted volume at startup
-RUN apk add --no-cache ca-certificates openssl sudo
+# su-exec: used by railway-entrypoint.sh to drop from root to omuser after chowning the mounted volume
+RUN apk add --no-cache ca-certificates openssl su-exec
 
 # Enable Corepack for Yarn
 RUN corepack enable
@@ -118,15 +118,14 @@ RUN chmod +x /app/docker/scripts/railway-entrypoint.sh
 # Prepare storage directory for Railway volume mount
 RUN mkdir -p /app/apps/mercato/storage
 
-# Create non-root user and grant passwordless sudo for chown only
+# Create non-root user. No sudo privileges granted — railway-entrypoint.sh runs as
+# root and uses su-exec to drop to omuser after chowning the mounted volume.
 RUN adduser -D -u 1001 omuser \
- && chown -R omuser:omuser /app \
- && echo "omuser ALL=(root) NOPASSWD: /bin/chown" > /etc/sudoers.d/omuser \
- && chmod 0440 /etc/sudoers.d/omuser
-
-USER omuser
+ && chown -R omuser:omuser /app
 
 EXPOSE ${CONTAINER_PORT}
 
 WORKDIR /app/apps/mercato
-CMD ["yarn", "start"]
+
+# Default: run directly as omuser via su-exec (no entrypoint override)
+CMD ["su-exec", "omuser", "yarn", "start"]

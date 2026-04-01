@@ -597,6 +597,53 @@ async function resolveDictionaryEntryId(
  *
  * Makes HTTP request to external URL
  */
+/**
+ * Validate that a CALL_WEBHOOK URL is safe to fetch.
+ * Blocks private/reserved IP ranges to prevent SSRF attacks.
+ * Self-hosted deployments that need internal URLs can opt out via env.
+ */
+function validateWebhookUrl(url: string): void {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new Error(`CALL_WEBHOOK: invalid URL "${url}"`)
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`CALL_WEBHOOK: only HTTP/HTTPS allowed, got "${parsed.protocol}"`)
+  }
+
+  if (process.env.WORKFLOW_WEBHOOK_ALLOW_PRIVATE_URLS === 'true') return
+
+  // Normalise: strip trailing dot (e.g. "localhost." bypasses a localhost$ end-anchor
+  // but still resolves to 127.0.0.1) and strip IPv6 bracket literals.
+  let hostname = parsed.hostname.replace(/\.$/, '').replace(/^\[|\]$/g, '').toLowerCase()
+
+  // Unwrap IPv6-mapped IPv4 so it goes through the standard private-range check.
+  // Node.js URL normalises [::ffff:127.0.0.1] → [::ffff:7f00:1] (hex groups),
+  // so we handle both the decimal form and the two-hex-group form.
+  const mappedDecimal = hostname.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
+  const mappedHex = hostname.match(/^::ffff:([0-9a-f]+):([0-9a-f]+)$/)
+  if (mappedDecimal) {
+    hostname = mappedDecimal[1]
+  } else if (mappedHex) {
+    const hi = parseInt(mappedHex[1], 16)
+    const lo = parseInt(mappedHex[2], 16)
+    hostname = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`
+  }
+
+  // Covers: loopback, RFC-1918, link-local, unspecified, IPv6 loopback.
+  const privateRanges =
+    /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.0\.0\.0|::1$)/i
+  if (privateRanges.test(hostname)) {
+    throw new Error(
+      `CALL_WEBHOOK: URL targets a private/reserved address (${parsed.hostname}). ` +
+        `Set WORKFLOW_WEBHOOK_ALLOW_PRIVATE_URLS=true for trusted self-hosted deployments.`
+    )
+  }
+}
+
 export async function executeCallWebhook(
   config: any,
   context: ActivityContext
@@ -606,6 +653,8 @@ export async function executeCallWebhook(
   if (!url) {
     throw new Error('CALL_WEBHOOK requires "url" field')
   }
+
+  validateWebhookUrl(url)
 
   // Make HTTP request
   const response = await fetch(url, {
