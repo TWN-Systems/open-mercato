@@ -10,11 +10,13 @@ permissions:
   contents: read
   pull-requests: write
 
-# Cancel any in-progress snapshot run for the same branch on new pushes.
-# Without this, two rapid develop pushes publish the same tag twice.
+# Serialize snapshot runs per branch — queue rather than cancel.
+# cancel-in-progress: false is intentional: cancelling mid-publish would
+# leave some packages at the new version and others at the previous one,
+# making the npm registry inconsistent. Queuing is the safe behaviour.
 concurrency:
   group: snapshot-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   snapshot:
