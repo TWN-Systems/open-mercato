@@ -83,6 +83,7 @@ jobs:
           name: build-artifacts
           path: |
             packages/*/dist/
+            packages/*/generated/
             apps/mercato/.mercato/generated/
           retention-days: 1
           if-no-files-found: error
