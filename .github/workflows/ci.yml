@@ -44,6 +44,19 @@ jobs:
           key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
           restore-keys: yarn-${{ runner.os }}-
 
+      - name: Cache node_modules
+        # With nodeLinker:node-modules, yarn extracts zips into node_modules even
+        # when .yarn/cache hits — the extraction alone is ~85s. Caching node_modules
+        # directly and skipping install on hit eliminates that cost.
+        id: nm-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            apps/*/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+
       - name: Cache Turbo build outputs
         uses: actions/cache@v4
         with:
@@ -54,6 +67,7 @@ jobs:
             turbo-${{ runner.os }}-
 
       - name: Install dependencies
+        if: steps.nm-cache.outputs.cache-hit != 'true'
         run: yarn install --immutable
 
       - name: Build packages
@@ -120,8 +134,21 @@ jobs:
           path: .audit-passed
           key: audit-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
 
-      - name: Install dependencies
+      - name: Cache node_modules
+        # Only needed when audit-cache misses (i.e. yarn.lock changed).
+        # Shared key with other jobs — whichever runs first saves it.
         if: steps.audit-cache.outputs.cache-hit != 'true'
+        id: nm-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            apps/*/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+
+      - name: Install dependencies
+        if: steps.audit-cache.outputs.cache-hit != 'true' && steps.nm-cache.outputs.cache-hit != 'true'
         run: yarn install --immutable
 
       - name: Audit dependencies for known CVEs
@@ -199,6 +226,16 @@ jobs:
           key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
           restore-keys: yarn-${{ runner.os }}-
 
+      - name: Cache node_modules
+        id: nm-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            apps/*/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+
       - name: Cache pip packages
         uses: actions/cache@v4
         with:
@@ -210,6 +247,7 @@ jobs:
         run: python3 -m pip install --upgrade pip markitdown
 
       - name: Install dependencies
+        if: steps.nm-cache.outputs.cache-hit != 'true'
         run: yarn install --immutable
 
       - name: Cache Turbo build outputs
@@ -320,7 +358,18 @@ jobs:
           key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
           restore-keys: yarn-${{ runner.os }}-
 
+      - name: Cache node_modules
+        id: nm-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            apps/*/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+
       - name: Install dependencies
+        if: steps.nm-cache.outputs.cache-hit != 'true'
         run: yarn install --immutable
 
       - name: Download build artifacts
