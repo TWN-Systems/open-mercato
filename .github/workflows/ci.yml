@@ -29,12 +29,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Fetch base branch for change detection
-        # Only needed on PRs — gives Turbo enough history to compute
-        # which packages changed relative to the target branch.
-        if: github.event_name == 'pull_request'
-        run: git fetch origin ${{ github.base_ref }} --depth=1
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -57,37 +51,22 @@ jobs:
         run: yarn install --immutable
 
       - name: Build packages
-        # On PRs: turbo run build scoped to affected packages only, apps excluded.
-        # Multiple --filter flags use union semantics, so we must exclude apps
-        # explicitly — they would otherwise be included as dependents of changed
-        # packages, and they fail here because generated files don't exist yet.
-        # On pushes to protected branches: full build, no filter.
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            yarn turbo run build \
-              --filter=[origin/${{ github.base_ref }}]... \
-              --filter='!./apps/*'
-          else
-            yarn build:packages
-          fi
+        # Always builds all packages — no filter. Turbo cache handles the speedup:
+        # unchanged packages are cache hits and restored to disk in milliseconds.
+        # Filtering here would produce an incomplete artifact, breaking downstream
+        # jobs that need every package's dist/ output (test, ephemeral-integration).
+        run: yarn build:packages
         env:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
 
       - name: Prepare generated modules
-        # Always run fully — generator discovers all modules regardless of
-        # what changed, and its output is consumed by the app, not packages.
+        # Always run fully — generator discovers all modules regardless of what
+        # changed, and its output is consumed by the app, not packages.
         run: yarn generate
 
       - name: Rebuild packages with generated files
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            yarn turbo run build \
-              --filter=[origin/${{ github.base_ref }}]... \
-              --filter='!./apps/*'
-          else
-            yarn build:packages
-          fi
+        run: yarn build:packages
         env:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
@@ -136,6 +115,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Fetch base branch for change detection
+        # Needed so Turbo can compute which packages changed vs. the PR base.
         if: github.event_name == 'pull_request'
         run: git fetch origin ${{ github.base_ref }} --depth=1
 
@@ -186,11 +166,13 @@ jobs:
         continue-on-error: true
 
       - name: Checking types
+        # On PRs: scope to packages/app that changed since the base branch.
+        # Generated files are available from the artifact download, so the app
+        # can be typechecked safely if app-level code changed.
+        # On pushes to protected branches: full typecheck, no filter.
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            yarn turbo run typecheck \
-              --filter=[origin/${{ github.base_ref }}]... \
-              --filter='!./apps/*'
+            yarn turbo run typecheck --filter=[origin/${{ github.base_ref }}]...
           else
             yarn typecheck
           fi
@@ -199,17 +181,15 @@ jobs:
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
 
       - name: Test
+        # Same scoping as typecheck — affected packages only on PRs.
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            yarn turbo run test \
-              --filter=[origin/${{ github.base_ref }}]... \
-              --filter='!./apps/*'
+            yarn turbo run test --filter=[origin/${{ github.base_ref }}]...
           else
             yarn test
           fi
 
       - name: Build
-        # Always build the full app — integration tests need a complete build.
         run: yarn build:app
 
   # ── Integration tests ───────────────────────────────────────────────────────
