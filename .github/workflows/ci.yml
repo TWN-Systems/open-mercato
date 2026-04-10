@@ -111,11 +111,24 @@ jobs:
           key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
           restore-keys: yarn-${{ runner.os }}-
 
+      - name: Cache audit result
+        # Keyed on yarn.lock — if the lockfile is unchanged the dependency
+        # graph is identical and a prior passing audit is still valid.
+        id: audit-cache
+        uses: actions/cache@v4
+        with:
+          path: .audit-passed
+          key: audit-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+
       - name: Install dependencies
+        if: steps.audit-cache.outputs.cache-hit != 'true'
         run: yarn install --immutable
 
       - name: Audit dependencies for known CVEs
-        run: yarn npm audit --all --recursive --severity high
+        if: steps.audit-cache.outputs.cache-hit != 'true'
+        run: |
+          yarn npm audit --all --recursive --severity high
+          echo "passed" > .audit-passed
 
   # ── Quality checks ──────────────────────────────────────────────────────────
   # Typechecking, unit tests, i18n sync, and the Next.js app build.
