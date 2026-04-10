@@ -4,6 +4,7 @@
   "tasks": {
     "build": {
       "cache": true,
+      "inputs": ["$TURBO_DEFAULT$", "generated/**"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "start": {

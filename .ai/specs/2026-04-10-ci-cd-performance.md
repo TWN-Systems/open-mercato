@@ -478,6 +478,9 @@ GitHub-hosted `ubuntu-latest` runners are ephemeral — every job starts from a 
   - **Note:** `cache: 'yarn'` on `setup-node@v4` is NOT used. `setup-node` calls `yarn config get cacheFolder` before `corepack enable` runs, which invokes the globally-installed Yarn 1 (1.22.22) instead of Yarn 4. With `"packageManager": "yarn@4.12.0"` in `package.json`, Yarn 1 aborts immediately. The correct approach is a manual `actions/cache` step placed after `corepack enable`.
 - [x] Artifact includes `packages/*/generated/` in addition to `packages/*/dist/` and `apps/mercato/.mercato/generated/`
   - **Note:** Several packages (`core`, `onboarding`, `scheduler`, `integration-cozystack`) declare `#generated/*` Node.js subpath imports whose `types` condition points to source `.ts` files in `packages/<pkg>/generated/` — not `dist/`. The `test` job's typecheck fails unless these source files are present on disk.
+- [x] `turbo.json` build task: add `"inputs": ["$TURBO_DEFAULT$", "generated/**"]`
+  - **Root cause of second-build cache poisoning:** `.gitignore` includes `packages/*/generated/`. Turbo only hashes git-tracked files by default. This means after `yarn generate` creates `packages/core/generated/entities.ids.generated.ts`, Turbo computes the **same** hash for `@open-mercato/core#build` as before generate ran — so the second `yarn build:packages` is a false cache hit returning the first build's output, which has no `dist/generated/`. Jest then fails at runtime: `Cannot find module '../../../generated/entities.ids.generated.js'`.
+  - **Fix:** `$TURBO_DEFAULT$` preserves all non-gitignored inputs; `generated/**` explicitly adds the gitignored generated files. After generate, the hash changes → cache miss → fresh build → `dist/generated/` is populated.
 - [x] Add pip cache for markitdown
 - **Estimated savings:** ~2–3 min on warm cache
 
