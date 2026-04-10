@@ -29,6 +29,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Fetch base branch for change detection
+        # Only needed on PRs — gives Turbo enough history to compute
+        # which packages changed relative to the target branch.
+        if: github.event_name == 'pull_request'
+        run: git fetch origin ${{ github.base_ref }} --depth=1
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -51,16 +57,37 @@ jobs:
         run: yarn install --immutable
 
       - name: Build packages
-        run: yarn build:packages
+        # On PRs: turbo run build scoped to affected packages only, apps excluded.
+        # Multiple --filter flags use union semantics, so we must exclude apps
+        # explicitly — they would otherwise be included as dependents of changed
+        # packages, and they fail here because generated files don't exist yet.
+        # On pushes to protected branches: full build, no filter.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            yarn turbo run build \
+              --filter=[origin/${{ github.base_ref }}]... \
+              --filter='!./apps/*'
+          else
+            yarn build:packages
+          fi
         env:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
 
       - name: Prepare generated modules
+        # Always run fully — generator discovers all modules regardless of
+        # what changed, and its output is consumed by the app, not packages.
         run: yarn generate
 
       - name: Rebuild packages with generated files
-        run: yarn build:packages
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            yarn turbo run build \
+              --filter=[origin/${{ github.base_ref }}]... \
+              --filter='!./apps/*'
+          else
+            yarn build:packages
+          fi
         env:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
@@ -107,6 +134,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Fetch base branch for change detection
+        if: github.event_name == 'pull_request'
+        run: git fetch origin ${{ github.base_ref }} --depth=1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -155,15 +186,30 @@ jobs:
         continue-on-error: true
 
       - name: Checking types
-        run: yarn typecheck
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            yarn turbo run typecheck \
+              --filter=[origin/${{ github.base_ref }}]... \
+              --filter='!./apps/*'
+          else
+            yarn typecheck
+          fi
         env:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
 
       - name: Test
-        run: yarn test
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            yarn turbo run test \
+              --filter=[origin/${{ github.base_ref }}]... \
+              --filter='!./apps/*'
+          else
+            yarn test
+          fi
 
       - name: Build
+        # Always build the full app — integration tests need a complete build.
         run: yarn build:app
 
   # ── Integration tests ───────────────────────────────────────────────────────
