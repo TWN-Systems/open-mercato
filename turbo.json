@@ -1,9 +1,9 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalPassThroughEnv": ["*"],
+  "globalEnv": ["NODE_ENV"],
   "tasks": {
     "build": {
-      "cache": false,
+      "cache": true,
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "start": {
@@ -27,7 +27,7 @@
       "persistent": true
     },
     "typecheck": {
-      "cache": false,
+      "cache": true,
       "outputs": []
     },
     "test": {

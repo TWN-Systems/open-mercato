@@ -12,6 +12,12 @@ on:
       - main
       - develop
 
+# Cancel any in-progress run on the same branch when a new push arrives.
+# Prevents multiple 55-min runs queuing up from rapid pushes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ── Shared build ────────────────────────────────────────────────────────────
   # Installs deps, compiles all packages, and runs the code generator.
@@ -32,17 +38,32 @@ jobs:
       - name: Enable Corepack
         run: corepack enable
 
+      - name: Cache Turbo build outputs
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ github.ref_name }}-
+            turbo-${{ runner.os }}-
+
       - name: Install dependencies
         run: yarn install --immutable
 
       - name: Build packages
         run: yarn build:packages
+        env:
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
 
       - name: Prepare generated modules
         run: yarn generate
 
       - name: Rebuild packages with generated files
         run: yarn build:packages
+        env:
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -109,6 +130,15 @@ jobs:
       - name: Install dependencies
         run: yarn install --immutable
 
+      - name: Cache Turbo build outputs
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ github.ref_name }}-
+            turbo-${{ runner.os }}-
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -126,6 +156,9 @@ jobs:
 
       - name: Checking types
         run: yarn typecheck
+        env:
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
 
       - name: Test
         run: yarn test
