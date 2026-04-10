@@ -123,14 +123,53 @@ jobs:
   test:
     runs-on: ubuntu-latest
     needs: [prepare, audit]
+    outputs:
+      skip_integration: ${{ steps.integration-scope.outputs.skip }}
+      affected_modules: ${{ steps.integration-scope.outputs.modules }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Fetch base branch for change detection
-        # Needed so Turbo can compute which packages changed vs. the PR base.
+        # Needed so Turbo can compute which packages changed vs. the PR base,
+        # and so the integration scope step can diff against it.
         if: github.event_name == 'pull_request'
         run: git fetch origin ${{ github.base_ref }} --depth=1
+
+      - name: Compute integration scope
+        # On PRs: determine which modules changed and whether integration tests
+        # should run at all. On pushes to main/develop: always run the full suite.
+        id: integration-scope
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "modules=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED=$(git diff origin/${{ github.base_ref }} --name-only)
+
+          # These paths affect behaviour across all modules — run the full suite.
+          FULL_SUITE_PATTERN='^packages/shared/|^packages/ui/|^packages/events/|^packages/queue/|^packages/cache/|^packages/search/|^packages/onboarding/|^packages/webhooks/|^packages/core/src/lib/|^packages/enterprise/src/lib/|^apps/mercato/src/(app|lib|components|layout\.|page\.)'
+          if echo "$CHANGED" | grep -qE "$FULL_SUITE_PATTERN"; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "modules=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Extract module folder names from module-specific paths.
+          MODULES=$(echo "$CHANGED" | \
+            grep -oP '(?:packages/(?:core|enterprise)|apps/mercato)/src/modules/\K[^/]+' | \
+            sort -u | paste -sd,)
+
+          if [ -z "$MODULES" ]; then
+            # Only non-module files changed (CI, docs, scripts) — skip integration.
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "modules=" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "modules=$MODULES" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -212,16 +251,22 @@ jobs:
         run: yarn build:app
 
   # ── Integration tests ───────────────────────────────────────────────────────
-  # Boots an ephemeral app server and runs the full Playwright suite.
+  # Boots an ephemeral app server and runs the Playwright suite.
   # Blocked on 'test' so integration only runs when unit tests are green.
   #
-  # Performance note: at 311 spec files with workers: 1, this job accounts for
-  # ~45 of the ~55 min total wall time. Playwright sharding across 3 parallel
-  # runners (--shard=N/3) would cut this to ~16 min but requires each shard
-  # to start its own ephemeral server and a final step to merge coverage JSON.
+  # On PRs: a single runner executes only affected modules (OM_INTEGRATION_MODULES).
+  #         If no module-level code changed the job is skipped entirely.
+  # On pushes to main/develop: 5 parallel shards run the full suite, cutting
+  #         wall time from ~47 min to ~10 min. A merge-coverage job then
+  #         combines per-shard coverage-summary.json files into one report.
   ephemeral-integration:
     runs-on: ubuntu-latest
     needs: test
+    if: needs.test.outputs.skip_integration != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ github.event_name == 'pull_request' && fromJson('["none"]') || fromJson('["1/5","2/5","3/5","4/5","5/5"]') }}
     env:
       OM_ENABLE_ENTERPRISE_MODULES: 'true'
       OM_ENABLE_ENTERPRISE_MODULES_SSO: 'true'
@@ -229,6 +274,21 @@ jobs:
       JWT_SECRET: 'ci-ephemeral-test-jwt-secret'
       OM_SECURITY_MFA_SETUP_SECRET: 'ci-ephemeral-test-mfa-setup-secret'
     steps:
+      - name: Compute shard metadata
+        id: shard-meta
+        run: |
+          SHARD="${{ matrix.shard }}"
+          if [ "$SHARD" = "none" ]; then
+            echo "artifact_name=integration-test-results" >> "$GITHUB_OUTPUT"
+            echo "shard_flag=" >> "$GITHUB_OUTPUT"
+            echo "shard_index=none" >> "$GITHUB_OUTPUT"
+          else
+            INDEX="${SHARD%%/*}"
+            echo "artifact_name=integration-test-results-${INDEX}" >> "$GITHUB_OUTPUT"
+            echo "shard_flag=--shard ${SHARD}" >> "$GITHUB_OUTPUT"
+            echo "shard_index=${INDEX}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -264,10 +324,31 @@ jobs:
       - name: Run ephemeral integration tests with code coverage
         env:
           OM_INTEGRATION_APP_READY_TIMEOUT_SECONDS: '180'
-        run: yarn test:integration:coverage
+          OM_INTEGRATION_MODULES: ${{ needs.test.outputs.affected_modules }}
+        run: |
+          SHARD_FLAG="${{ steps.shard-meta.outputs.shard_flag }}"
+          if [ -n "$SHARD_FLAG" ]; then
+            yarn test:integration:coverage $SHARD_FLAG
+          else
+            yarn test:integration:coverage
+          fi
+
+      - name: Stage coverage for shard merge
+        # Only needed for sharded push runs — copies per-shard summary to a
+        # named subdirectory so merge-coverage can collect all shards at once.
+        if: always() && matrix.shard != 'none'
+        run: |
+          INDEX="${{ steps.shard-meta.outputs.shard_index }}"
+          DEST=".ai/qa/test-results/coverage-shard-${INDEX}/code"
+          mkdir -p "$DEST"
+          SRC=".ai/qa/test-results/coverage/code/coverage-summary.json"
+          if [ -f "$SRC" ]; then
+            cp "$SRC" "$DEST/coverage-summary.json"
+          fi
 
       - name: Display integration coverage summary
-        if: always()
+        # PR only (shard=none) — push coverage is merged and displayed by merge-coverage job.
+        if: always() && matrix.shard == 'none'
         run: |
           SUMMARY_FILE=".ai/qa/test-results/coverage/code/coverage-summary.json"
           if [ ! -f "$SUMMARY_FILE" ]; then
@@ -316,12 +397,85 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-test-results
+          name: ${{ steps.shard-meta.outputs.artifact_name }}
           path: |
             .ai/qa/test-results/html/
             .ai/qa/test-results/artifacts/
             .ai/qa/test-results/results.json
+            .ai/qa/test-results/coverage-shard-${{ steps.shard-meta.outputs.shard_index }}/
           if-no-files-found: ignore
+
+  # ── Merge shard coverage ─────────────────────────────────────────────────────
+  # Runs after all 5 ephemeral-integration shards complete (push only).
+  # Downloads per-shard artifacts, merges coverage-summary.json files, and
+  # writes a combined report to the job summary.
+  merge-coverage:
+    runs-on: ubuntu-latest
+    needs: ephemeral-integration
+    if: github.event_name == 'push'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Download shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: integration-test-results-*
+          merge-multiple: true
+
+      - name: Merge shard coverage reports
+        run: node scripts/merge-coverage.mjs .ai/qa/test-results
+
+      - name: Display merged integration coverage
+        if: always()
+        run: |
+          SUMMARY_FILE=".ai/qa/test-results/coverage/code/coverage-summary.json"
+          if [ ! -f "$SUMMARY_FILE" ]; then
+            echo "Merged coverage summary not found at $SUMMARY_FILE"
+            echo "## Integration Coverage (Merged)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Coverage summary file was not generated." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          node -e "
+          const fs = require('fs');
+          const p = process.argv[1];
+          const summary = JSON.parse(fs.readFileSync(p, 'utf8'));
+          const t = summary.total || {};
+          const f = (name) => {
+            const m = t[name] || {};
+            const covered = m.covered ?? 0;
+            const total = m.total ?? 0;
+            const pct = m.pct ?? 0;
+            return \`\${name}: \${covered}/\${total} (\${pct}%)\`;
+          };
+          const lines = [
+            '[coverage] Merged integration coverage summary',
+            f('lines'),
+            f('statements'),
+            f('functions'),
+            f('branches'),
+          ];
+          console.log(lines.join('\n'));
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, [
+            '## Integration Coverage (Merged)',
+            '',
+            '| Metric | Covered/Total | Percent |',
+            '|---|---:|---:|',
+            \`| Lines | \${t.lines?.covered ?? 0}/\${t.lines?.total ?? 0} | \${t.lines?.pct ?? 0}% |\`,
+            \`| Statements | \${t.statements?.covered ?? 0}/\${t.statements?.total ?? 0} | \${t.statements?.pct ?? 0}% |\`,
+            \`| Functions | \${t.functions?.covered ?? 0}/\${t.functions?.total ?? 0} | \${t.functions?.pct ?? 0}% |\`,
+            \`| Branches | \${t.branches?.covered ?? 0}/\${t.branches?.total ?? 0} | \${t.branches?.pct ?? 0}% |\`,
+            '',
+            'Source: \`.ai/qa/test-results/coverage/code/coverage-summary.json\`',
+            '',
+          ].join('\n'));
+          " "$SUMMARY_FILE"
 
   # ── Docker image builds ──────────────────────────────────────────────────────
   # Validates all Dockerfiles build cleanly. Runs in parallel with

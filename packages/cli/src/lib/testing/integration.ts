@@ -73,6 +73,7 @@ type IntegrationCoverageOptions = {
   verbose: boolean
   workers: number | null
   retries: number | null
+  shard: string | null
   json: boolean
   keepRawV8: boolean
   forceRebuild: boolean
@@ -140,7 +141,9 @@ type EphemeralEnvironmentState = {
   startedAt: string
 }
 
-type PlaywrightRunOptions = Pick<InteractiveIntegrationOptions, 'verbose' | 'captureScreenshots' | 'workers' | 'retries'>
+type PlaywrightRunOptions = Pick<InteractiveIntegrationOptions, 'verbose' | 'captureScreenshots' | 'workers' | 'retries'> & {
+  shard?: string | null
+}
 
 const DEFAULT_APP_READY_TIMEOUT_MS = 90_000
 const APP_READY_INTERVAL_MS = 1_000
@@ -1682,6 +1685,7 @@ export function parseIntegrationCoverageOptions(rawArgs: string[]): IntegrationC
   let verbose = false
   let workers: number | null = null
   let retries: number | null = null
+  let shard: string | null = null
   let json = false
   let keepRawV8 = false
   let forceRebuild = false
@@ -1766,6 +1770,26 @@ export function parseIntegrationCoverageOptions(rawArgs: string[]): IntegrationC
       retries = parsed
       continue
     }
+    if (argument === '--shard') {
+      const value = rawArgs[index + 1]
+      if (!value || value.startsWith('--')) {
+        throw new Error('Missing value for --shard')
+      }
+      if (!/^\d+\/\d+$/.test(value)) {
+        throw new Error(`Invalid --shard value: ${value}. Expected format: N/M`)
+      }
+      shard = value
+      index += 1
+      continue
+    }
+    if (argument.startsWith('--shard=')) {
+      const value = argument.slice('--shard='.length)
+      if (!/^\d+\/\d+$/.test(value)) {
+        throw new Error(`Invalid --shard value: ${value}. Expected format: N/M`)
+      }
+      shard = value
+      continue
+    }
     if (argument === '--json') {
       json = true
       continue
@@ -1792,6 +1816,7 @@ export function parseIntegrationCoverageOptions(rawArgs: string[]): IntegrationC
     verbose,
     workers,
     retries,
+    shard,
     json,
     keepRawV8,
     forceRebuild,
@@ -2228,6 +2253,7 @@ export async function runIntegrationCoverageReport(rawArgs: string[]): Promise<v
           captureScreenshots: options.captureScreenshots,
           workers: options.workers,
           retries: options.retries,
+          shard: options.shard,
         },
       )
       return null
@@ -2348,6 +2374,9 @@ async function runPlaywrightSelection(
   }
   if (options.retries !== null) {
     args.push('--retries', String(options.retries))
+  }
+  if (options.shard) {
+    args.push('--shard', options.shard)
   }
   if (Array.isArray(selection) && selection.length > 0) {
     args.push(...selection)

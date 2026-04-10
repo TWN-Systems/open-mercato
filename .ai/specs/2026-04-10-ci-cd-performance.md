@@ -505,22 +505,45 @@ GitHub-hosted `ubuntu-latest` runners are ephemeral — every job starts from a 
 
 ### Phase 3 — Affected-only integration tests (~2–3 days)
 
-1. Add `--modules` flag support to `packages/cli/src/lib/testing/integration-discovery.ts`
-2. Add a `scripts/compute-affected-modules.sh` that outputs changed module names from `git diff`
-3. Wire into `ci.yml` `ephemeral-integration` job:
-   - Compute `CHANGED_MODULES` from git diff
-   - If empty (no module changes), skip integration tests or run a smoke subset
-   - Otherwise pass `--modules=$CHANGED_MODULES` to the test runner
+1. [x] Add module filtering to `.ai/qa/tests/playwright.config.ts`
+   - Reads `OM_INTEGRATION_MODULES` env var (comma-separated module names, e.g. `"sales,customers"`)
+   - When set, filters `discoverIntegrationSpecFiles` output: a spec is included if its `moduleName` matches, any of its `requiredModules` match, or its `moduleName` is `null` (legacy root specs always run)
+   - When unset or empty, all specs run unchanged (no behaviour change for existing CI)
+   - Uses `filteredSpecs` instead of `discoveredSpecs` for `testMatch`
+2. [x] Compute affected modules inline in `ci.yml` `test` job (no separate script needed):
+   - "Compute integration scope" step added to `test` job; outputs `skip` and `modules`
+   - Full-suite patterns trigger the full run; only unmatched module paths produce a filtered list
+   - Non-module-only changes (CI, docs, scripts) set `skip=true` to skip integration entirely
+3. [x] Wire into `ci.yml` `ephemeral-integration` job:
+   - `if: needs.test.outputs.skip_integration != 'true'` skips the job when no module changes
+   - `OM_INTEGRATION_MODULES: ${{ needs.test.outputs.affected_modules }}` passes module list
+   - On pushes, `affected_modules` is empty so all specs run (filtered by shard)
 4. Validate: change one file in `packages/core/src/modules/customers/` and confirm only customers integration tests run
 
 ### Phase 4 — Playwright sharding for full runs (~1–2 days)
 
-1. Add `strategy.matrix.shard: [1, 2, 3, 4, 5]` to `ephemeral-integration`
-2. Pass `--shard=${{ matrix.shard }}/5` to the coverage command
-3. Rename artifact upload: `integration-test-results-${{ matrix.shard }}`
-4. Add `merge-coverage` job: downloads all 5 artifacts, merges `coverage-summary.json` files, writes step summary
-5. Write `scripts/merge-coverage.mjs` (merge 5 partial JSON files by summing covered/total fields)
+1. [x] Add `strategy.matrix` to `ephemeral-integration` — dynamic matrix: PR uses `["none"]` (single runner, affected-only), push uses `["1/5","2/5","3/5","4/5","5/5"]` (5 parallel shards, full suite)
+2. [x] "Compute shard metadata" step derives `shard_flag` (`--shard N/M` or empty) and `artifact_name` from `matrix.shard`; test command passes flag conditionally
+3. [x] Artifact upload uses `${{ steps.shard-meta.outputs.artifact_name }}` — `integration-test-results-N` for shards, `integration-test-results` for PR
+4. [x] Add `merge-coverage` job: downloads all `integration-test-results-*` artifacts with `merge-multiple: true`, runs `node scripts/merge-coverage.mjs`, writes step summary; only runs on push
+5. [x] `scripts/merge-coverage.mjs` written (no external dependencies, scans `coverage-shard-*/code/coverage-summary.json`)
 6. Validate on a full run (push to develop): confirm all 5 shards complete in ~10–12 min
+
+#### Implementation notes (completed)
+
+**`--shard N/M` CLI flag** (`packages/cli/src/lib/testing/integration.ts`):
+- Added `shard: string | null` to `IntegrationCoverageOptions` and `PlaywrightRunOptions` (as an intersection `& { shard?: string | null }`).
+- `parseIntegrationCoverageOptions` accepts both `--shard N/M` (two-token) and `--shard=N/M` (equals) forms; validates format with `/^\d+\/\d+$/`.
+- `runPlaywrightSelection` pushes `--shard <value>` to the Playwright CLI args (placed after `--retries`, before file selection).
+- `runIntegrationCoverageReport` forwards `shard` from parsed options into `runPlaywrightSelection`.
+
+**`scripts/merge-coverage.mjs`**:
+- Accepts an optional `resultsRoot` argument (default: `.ai/qa/test-results`).
+- Discovers shard files by scanning `<resultsRoot>/coverage-shard-*/code/coverage-summary.json` using `readdirSync` (no external dependencies).
+- **Total merge**: sums `total`, `covered`, and `skipped` counters across all shards for each of the four Istanbul metrics (`lines`, `statements`, `functions`, `branches`); recomputes `pct = Math.round(covered/total * 10000) / 100` (0 when total is 0).
+- **Per-file merge**: unions all file entries across shards; when the same file path appears in multiple shards, the shard with the higher combined `lines.covered + statements.covered` count wins (the shard that ran tests for that file will have non-zero coverage).
+- Writes merged JSON to `<resultsRoot>/coverage/code/coverage-summary.json` (mkdir -p).
+- Prints `[merge-coverage] Merged N shards: lines X/Y (Z%)` and exits 0; exits 1 with an error message on failure.
 
 ### Phase 5 — Node version + Dockerfile consistency (~2 hours)
 
