@@ -305,11 +305,6 @@ jobs:
   # Boots an ephemeral app server and runs the Playwright suite.
   # Blocked on 'test' so integration only runs when unit tests are green.
   #
-  # Uses the official Microsoft Playwright image so Chromium and all its
-  # system dependencies are pre-installed — no 'playwright install' step needed.
-  # Tag must match the @playwright/test version in .ai/qa/package.json.
-  # Update together when bumping Playwright.
-  #
   # On PRs: a single runner executes only affected modules (OM_INTEGRATION_MODULES).
   #         If no module-level code changed the job is skipped entirely.
   # On pushes to main/develop: 5 parallel shards run the full suite, cutting
@@ -317,7 +312,6 @@ jobs:
   #         combines per-shard coverage-summary.json files into one report.
   ephemeral-integration:
     runs-on: ubuntu-latest
-    container: mcr.microsoft.com/playwright:v1.50.0-jammy
     needs: test
     if: needs.test.outputs.skip_integration != 'true'
     strategy:
@@ -385,6 +379,17 @@ jobs:
 
       - name: Build app
         run: yarn workspace @open-mercato/app build
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-v1.50.0
+
+      - name: Install Playwright browser
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
 
       - name: Run ephemeral integration tests with code coverage
         env:
