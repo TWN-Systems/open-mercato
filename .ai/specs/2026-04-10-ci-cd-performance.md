@@ -20,16 +20,18 @@ There are five GitHub Actions workflows. Each has a distinct purpose.
 
 ```
 prepare ──┐
-           ├──► test ──► ephemeral-integration
-audit   ──┘         └──► docker-build
+           ├──► test ──► ephemeral-integration ──► merge-coverage
+audit   ──┤         └──► docker-build
+lint    ──┘
 ```
 
 | Job | What it does | Why |
 |-----|-------------|-----|
 | `prepare` | Install deps, build all packages twice (before and after `generate`), upload `dist/` + `.mercato/generated/` as artifact | Packages must be compiled before any other job can typecheck or test them. The double build is required because `generate` produces TypeScript files that packages then import. |
 | `audit` | Install deps, `yarn npm audit --severity high` | Security gate — run in parallel with `prepare` since it only needs `yarn.lock`, not built packages. |
-| `test` | Download artifact, install markitdown, run dep-version check, i18n sync/usage check, `tsc --noEmit`, Jest unit tests, Next.js app build | Validates code correctness without a live server. Must run after `prepare` (needs compiled packages) and `audit` (security gate). |
-| `ephemeral-integration` | Download artifact, build Next.js app, install Playwright, boot the full app in-process, run 311 Playwright spec files with `workers: 1` | End-to-end validation that modules interact correctly. Only runs when unit tests are green. |
+| `lint` | Install deps, run `yarn lint` (ESLint) | Fast static analysis — runs in parallel with `prepare`/`audit`, fails fast before heavy jobs. |
+| `test` | Download artifact, install markitdown, run dep-version check, i18n sync/usage check, `tsc --noEmit`, Jest unit tests, Next.js app build, upload app build artifact | Validates code correctness without a live server. Must run after `prepare` (needs compiled packages), `audit` (security gate), and `lint`. |
+| `ephemeral-integration` | Download artifacts (packages + app build), install Playwright, boot the full app in-process, run 311 Playwright spec files with `workers: 1` | End-to-end validation that modules interact correctly. Only runs when unit tests are green. App build is reused from `test` job — not rebuilt. |
 | `docker-build` | Build three Dockerfiles using GitHub Actions layer cache | Validates production images build cleanly. Runs in parallel with ephemeral-integration. Not on critical path. |
 
 **Measured wall times (run 24178370484):**
@@ -526,8 +528,10 @@ GitHub-hosted `ubuntu-latest` runners are ephemeral — every job starts from a 
 2. [x] "Compute shard metadata" step derives `shard_flag` (`--shard N/M` or empty) and `artifact_name` from `matrix.shard`; test command passes flag conditionally
 3. [x] Artifact upload uses `${{ steps.shard-meta.outputs.artifact_name }}` — `integration-test-results-N` for shards, `integration-test-results` for PR
 4. [x] Add `merge-coverage` job: downloads all `integration-test-results-*` artifacts with `merge-multiple: true`, runs `node scripts/merge-coverage.mjs`, writes step summary; only runs on push
-5. [x] `scripts/merge-coverage.mjs` written (no external dependencies, scans `coverage-shard-*/code/coverage-summary.json`)
-6. Validate on a full run (push to develop): confirm all 5 shards complete in ~10–12 min
+5. [x] `scripts/merge-coverage.mjs` written (no external dependencies, scans `coverage-shard-*/code/coverage-summary.json`); exits 0 with warning when no shard files found (graceful degradation when coverage not produced)
+6. [x] App build artifact sharing: `test` job uploads `apps/mercato/.next/` as `app-build` artifact after `yarn build:app`; `ephemeral-integration` downloads it instead of rebuilding (~96s × 5 shards = ~8 min saved)
+7. [x] Lint job: runs ESLint in parallel with `prepare`/`audit`; `test` job now needs `[prepare, audit, lint]`
+8. Validate on a full run (push to develop): confirm all 5 shards complete in ~10–12 min
 
 #### Implementation notes (completed)
 

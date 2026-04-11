@@ -160,12 +160,53 @@ jobs:
           yarn npm audit --all --recursive --severity high
           echo "passed" > .audit-passed
 
+  # ── Lint ─────────────────────────────────────────────────────────────────────
+  # Fast static analysis — runs in parallel with prepare and audit.
+  # ESLint doesn't need compiled packages, so it can fail fast before heavy jobs.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Cache Yarn packages
+        uses: actions/cache@v4
+        with:
+          path: .yarn/cache
+          key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+          restore-keys: yarn-${{ runner.os }}-
+
+      - name: Cache node_modules
+        id: nm-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            apps/*/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+
+      - name: Install dependencies
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+        run: yarn install --immutable
+
+      - name: Lint
+        run: yarn lint
+
   # ── Quality checks ──────────────────────────────────────────────────────────
   # Typechecking, unit tests, i18n sync, and the Next.js app build.
-  # Blocked on both 'prepare' (needs compiled packages) and 'audit' (security gate).
+  # Blocked on prepare (needs compiled packages), audit (security gate), and lint.
   test:
     runs-on: ubuntu-latest
-    needs: [prepare, audit]
+    needs: [prepare, audit, lint]
     outputs:
       skip_integration: ${{ steps.integration-scope.outputs.skip }}
       affected_modules: ${{ steps.integration-scope.outputs.modules }}
@@ -315,6 +356,15 @@ jobs:
       - name: Build
         run: yarn build:app
 
+      - name: Upload app build
+        # Shares the Next.js output with integration shards so they skip rebuilding (~96s saved each).
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-build
+          path: apps/mercato/.next/
+          retention-days: 1
+          if-no-files-found: error
+
   # ── Integration tests ───────────────────────────────────────────────────────
   # Boots an ephemeral app server and runs the Playwright suite.
   # Blocked on 'test' so integration only runs when unit tests are green.
@@ -391,8 +441,13 @@ jobs:
         with:
           name: build-artifacts
 
-      - name: Build app
-        run: yarn workspace @open-mercato/app build
+      - name: Download app build
+        # Reuses the Next.js build produced by the test job — avoids rebuilding
+        # (~96s) in each of the 5 parallel shards (~8 min saved total).
+        uses: actions/download-artifact@v4
+        with:
+          name: app-build
+          path: apps/mercato/.next/
 
       - name: Cache Playwright browsers
         id: playwright-cache
