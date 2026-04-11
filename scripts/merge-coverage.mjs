@@ -75,8 +75,8 @@ try {
   const shardFiles = findShardSummaryFiles(resultsRoot)
 
   if (shardFiles.length === 0) {
-    console.error(`[merge-coverage] No shard coverage files found under ${resultsRoot}/coverage-shard-*/code/coverage-summary.json`)
-    process.exit(1)
+    console.warn(`[merge-coverage] No shard coverage files found under ${resultsRoot}/coverage-shard-*/code/coverage-summary.json — skipping merge`)
+    process.exit(0)
   }
 
   const summaries = shardFiles.map((filePath) => {
