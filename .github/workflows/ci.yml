@@ -166,6 +166,7 @@ jobs:
     outputs:
       skip_integration: ${{ steps.integration-scope.outputs.skip }}
       affected_modules: ${{ steps.integration-scope.outputs.modules }}
+      shard_matrix: ${{ steps.integration-scope.outputs.shard_matrix }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -177,23 +178,30 @@ jobs:
         run: git fetch origin ${{ github.base_ref }} --depth=1
 
       - name: Compute integration scope
-        # On PRs: determine which modules changed and whether integration tests
-        # should run at all. On pushes to main/develop: always run the full suite.
+        # Determines which integration tests to run and whether to shard them.
+        # Full-suite runs (push OR PR touching shared packages) always use 5 shards.
+        # Affected-only runs (PR touching specific modules) use a single runner.
+        # CI/docs/scripts-only PRs skip integration entirely.
         id: integration-scope
         run: |
+          FULL_SHARDS='["1/5","2/5","3/5","4/5","5/5"]'
+          SINGLE_SHARD='["none"]'
+
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "modules=" >> "$GITHUB_OUTPUT"
+            echo "shard_matrix=${FULL_SHARDS}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           CHANGED=$(git diff origin/${{ github.base_ref }} --name-only)
 
-          # These paths affect behaviour across all modules — run the full suite.
+          # These paths affect behaviour across all modules — run the full sharded suite.
           FULL_SUITE_PATTERN='^packages/shared/|^packages/ui/|^packages/events/|^packages/queue/|^packages/cache/|^packages/search/|^packages/onboarding/|^packages/webhooks/|^packages/core/src/lib/|^packages/enterprise/src/lib/|^apps/mercato/src/(app|lib|components|layout\.|page\.)'
           if echo "$CHANGED" | grep -qE "$FULL_SUITE_PATTERN"; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "modules=" >> "$GITHUB_OUTPUT"
+            echo "shard_matrix=${FULL_SHARDS}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -206,9 +214,12 @@ jobs:
             # Only non-module files changed (CI, docs, scripts) — skip integration.
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "modules=" >> "$GITHUB_OUTPUT"
+            echo "shard_matrix=${SINGLE_SHARD}" >> "$GITHUB_OUTPUT"
           else
+            # Module-specific changes — single runner with affected-only filter.
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "modules=$MODULES" >> "$GITHUB_OUTPUT"
+            echo "shard_matrix=${SINGLE_SHARD}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Setup Node.js
@@ -317,7 +328,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ github.event_name == 'pull_request' && fromJson('["none"]') || fromJson('["1/5","2/5","3/5","4/5","5/5"]') }}
+        shard: ${{ fromJson(needs.test.outputs.shard_matrix) }}
     env:
       OM_ENABLE_ENTERPRISE_MODULES: 'true'
       OM_ENABLE_ENTERPRISE_MODULES_SSO: 'true'
@@ -481,8 +492,8 @@ jobs:
   # writes a combined report to the job summary.
   merge-coverage:
     runs-on: ubuntu-latest
-    needs: ephemeral-integration
-    if: github.event_name == 'push'
+    needs: [test, ephemeral-integration]
+    if: needs.test.outputs.shard_matrix != '["none"]'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
