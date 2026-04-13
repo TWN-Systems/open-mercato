@@ -16,21 +16,81 @@ on:
       - develop
 
 # Cancel any in-progress run on the same branch when a new push arrives.
-# Prevents multiple 55-min runs queuing up from rapid pushes.
+# Prevents multiple long runs queuing up from rapid pushes.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   # ── Shared build ────────────────────────────────────────────────────────────
-  # Installs deps, compiles all packages, and runs the code generator.
-  # Uploads the compiled dist/ + generated .mercato/ as an artifact so every
-  # downstream job can skip this work entirely.
+  # Installs deps, compiles all packages, runs the code generator, and builds
+  # the Next.js app. Also computes integration scope so shards can start the
+  # moment this job finishes — without waiting for typecheck or unit tests.
+  #
+  # Uploads two artifacts:
+  #   build-artifacts  — packages/*/dist/ + generated files (needed by test)
+  #   app-build        — apps/mercato/.mercato/next/ (needed by integration shards)
   prepare:
     runs-on: ubuntu-latest
+    outputs:
+      skip_integration: ${{ steps.integration-scope.outputs.skip }}
+      affected_modules: ${{ steps.integration-scope.outputs.modules }}
+      shard_matrix: ${{ steps.integration-scope.outputs.shard_matrix }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Fetch base branch for change detection
+        # Needed so the scope step can diff against the PR base.
+        if: github.event_name == 'pull_request'
+        run: git fetch origin ${{ github.base_ref }} --depth=1
+
+      - name: Compute integration scope
+        # Determines which integration tests to run and whether to shard them.
+        # Full-suite runs (push OR PR touching shared packages) use 15 shards.
+        # Affected-only runs (PR touching specific modules) use a single runner.
+        # CI/docs/scripts-only PRs skip integration entirely.
+        # Runs in prepare so shards can start the moment the build is ready,
+        # without waiting for typecheck or unit tests to complete.
+        id: integration-scope
+        run: |
+          FULL_SHARDS='["1/15","2/15","3/15","4/15","5/15","6/15","7/15","8/15","9/15","10/15","11/15","12/15","13/15","14/15","15/15"]'
+          SINGLE_SHARD='["none"]'
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "modules=" >> "$GITHUB_OUTPUT"
+            echo "shard_matrix=${FULL_SHARDS}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED=$(git diff origin/${{ github.base_ref }} --name-only)
+
+          # These paths affect behaviour across all modules — run the full sharded suite.
+          FULL_SUITE_PATTERN='^packages/shared/|^packages/ui/|^packages/events/|^packages/queue/|^packages/cache/|^packages/search/|^packages/onboarding/|^packages/webhooks/|^packages/core/src/lib/|^packages/enterprise/src/lib/|^apps/mercato/src/(app|lib|components|layout\.|page\.)'
+          if echo "$CHANGED" | grep -qE "$FULL_SUITE_PATTERN"; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "modules=" >> "$GITHUB_OUTPUT"
+            echo "shard_matrix=${FULL_SHARDS}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Extract module folder names from module-specific paths.
+          MODULES=$(echo "$CHANGED" | \
+            grep -oP '(?:packages/(?:core|enterprise)|apps/mercato)/src/modules/\K[^/]+' | \
+            sort -u | paste -sd,)
+
+          if [ -z "$MODULES" ]; then
+            # Only non-module files changed (CI, docs, scripts) — skip integration.
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "modules=" >> "$GITHUB_OUTPUT"
+            echo "shard_matrix=${SINGLE_SHARD}" >> "$GITHUB_OUTPUT"
+          else
+            # Module-specific changes — single runner with affected-only filter.
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "modules=$MODULES" >> "$GITHUB_OUTPUT"
+            echo "shard_matrix=${SINGLE_SHARD}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -77,7 +137,7 @@ jobs:
         # Always builds all packages — no filter. Turbo cache handles the speedup:
         # unchanged packages are cache hits and restored to disk in milliseconds.
         # Filtering here would produce an incomplete artifact, breaking downstream
-        # jobs that need every package's dist/ output (test, ephemeral-integration).
+        # jobs that need every package's dist/ output.
         run: yarn build:packages
         env:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
@@ -94,6 +154,12 @@ jobs:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
 
+      - name: Build app
+        # Build the Next.js app once here so all 15 integration shards can reuse
+        # it — avoids ~96s x 15 = ~24 min of redundant per-shard rebuilds.
+        # distDir is .mercato/next (set in apps/mercato/next.config.ts).
+        run: yarn build:app
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -102,6 +168,16 @@ jobs:
             packages/*/dist/
             packages/*/generated/
             apps/mercato/.mercato/generated/
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload app build
+        # Separate artifact so the test job (typecheck/unit tests) does not need
+        # to download the large Next.js output unnecessarily.
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-build
+          path: apps/mercato/.mercato/next/
           retention-days: 1
           if-no-files-found: error
 
@@ -162,7 +238,9 @@ jobs:
 
   # ── Lint ─────────────────────────────────────────────────────────────────────
   # Fast static analysis — runs in parallel with prepare and audit.
-  # ESLint doesn't need compiled packages, so it can fail fast before heavy jobs.
+  # ESLint does not need compiled packages, so it can fail fast before heavy jobs.
+  # @open-mercato/app is excluded: its next lint script requires an ESLint config
+  # that is not yet present in the repo.
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -199,72 +277,22 @@ jobs:
         run: yarn install --immutable
 
       - name: Lint
-        run: yarn lint
+        run: yarn turbo run lint --filter=!@open-mercato/app
 
   # ── Quality checks ──────────────────────────────────────────────────────────
-  # Typechecking, unit tests, i18n sync, and the Next.js app build.
-  # Blocked on prepare (needs compiled packages), audit (security gate), and lint.
+  # Typechecking and unit tests. Runs in parallel with ephemeral-integration
+  # so typecheck cost does not add to the integration wall time.
+  # merge-coverage and docker-build both wait for this job to complete.
   test:
     runs-on: ubuntu-latest
     needs: [prepare, audit, lint]
-    outputs:
-      skip_integration: ${{ steps.integration-scope.outputs.skip }}
-      affected_modules: ${{ steps.integration-scope.outputs.modules }}
-      shard_matrix: ${{ steps.integration-scope.outputs.shard_matrix }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Fetch base branch for change detection
-        # Needed so Turbo can compute which packages changed vs. the PR base,
-        # and so the integration scope step can diff against it.
         if: github.event_name == 'pull_request'
         run: git fetch origin ${{ github.base_ref }} --depth=1
-
-      - name: Compute integration scope
-        # Determines which integration tests to run and whether to shard them.
-        # Full-suite runs (push OR PR touching shared packages) always use 5 shards.
-        # Affected-only runs (PR touching specific modules) use a single runner.
-        # CI/docs/scripts-only PRs skip integration entirely.
-        id: integration-scope
-        run: |
-          FULL_SHARDS='["1/5","2/5","3/5","4/5","5/5"]'
-          SINGLE_SHARD='["none"]'
-
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "modules=" >> "$GITHUB_OUTPUT"
-            echo "shard_matrix=${FULL_SHARDS}" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          CHANGED=$(git diff origin/${{ github.base_ref }} --name-only)
-
-          # These paths affect behaviour across all modules — run the full sharded suite.
-          FULL_SUITE_PATTERN='^packages/shared/|^packages/ui/|^packages/events/|^packages/queue/|^packages/cache/|^packages/search/|^packages/onboarding/|^packages/webhooks/|^packages/core/src/lib/|^packages/enterprise/src/lib/|^apps/mercato/src/(app|lib|components|layout\.|page\.)'
-          if echo "$CHANGED" | grep -qE "$FULL_SUITE_PATTERN"; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "modules=" >> "$GITHUB_OUTPUT"
-            echo "shard_matrix=${FULL_SHARDS}" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Extract module folder names from module-specific paths.
-          MODULES=$(echo "$CHANGED" | \
-            grep -oP '(?:packages/(?:core|enterprise)|apps/mercato)/src/modules/\K[^/]+' | \
-            sort -u | paste -sd,)
-
-          if [ -z "$MODULES" ]; then
-            # Only non-module files changed (CI, docs, scripts) — skip integration.
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "modules=" >> "$GITHUB_OUTPUT"
-            echo "shard_matrix=${SINGLE_SHARD}" >> "$GITHUB_OUTPUT"
-          else
-            # Module-specific changes — single runner with affected-only filter.
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "modules=$MODULES" >> "$GITHUB_OUTPUT"
-            echo "shard_matrix=${SINGLE_SHARD}" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -331,8 +359,6 @@ jobs:
 
       - name: Checking types
         # On PRs: scope to packages/app that changed since the base branch.
-        # Generated files are available from the artifact download, so the app
-        # can be typechecked safely if app-level code changed.
         # On pushes to protected branches: full typecheck, no filter.
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -353,35 +379,25 @@ jobs:
             yarn test
           fi
 
-      - name: Build
-        run: yarn build:app
-
-      - name: Upload app build
-        # Shares the Next.js output with integration shards so they skip rebuilding (~96s saved each).
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-build
-          path: apps/mercato/.next/
-          retention-days: 1
-          if-no-files-found: error
-
   # ── Integration tests ───────────────────────────────────────────────────────
   # Boots an ephemeral app server and runs the Playwright suite.
-  # Blocked on 'test' so integration only runs when unit tests are green.
+  # Starts as soon as 'prepare' completes — runs in PARALLEL with 'test' so
+  # typecheck/unit-test time does not add to the integration wall time.
+  # 'merge-coverage' is the final gate and waits for both jobs.
   #
   # On PRs: a single runner executes only affected modules (OM_INTEGRATION_MODULES).
   #         If no module-level code changed the job is skipped entirely.
-  # On pushes to main/develop: 5 parallel shards run the full suite, cutting
-  #         wall time from ~47 min to ~10 min. A merge-coverage job then
-  #         combines per-shard coverage-summary.json files into one report.
+  # On pushes to main/develop: 15 parallel shards run the full suite, cutting
+  #         wall time from ~45 min to ~6 min. A merge-coverage job then
+  #         combines per-shard coverage reports.
   ephemeral-integration:
     runs-on: ubuntu-latest
-    needs: test
-    if: needs.test.outputs.skip_integration != 'true'
+    needs: [prepare, audit, lint]
+    if: needs.prepare.outputs.skip_integration != 'true'
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJson(needs.test.outputs.shard_matrix) }}
+        shard: ${{ fromJson(needs.prepare.outputs.shard_matrix) }}
     env:
       OM_ENABLE_ENTERPRISE_MODULES: 'true'
       OM_ENABLE_ENTERPRISE_MODULES_SSO: 'true'
@@ -442,12 +458,13 @@ jobs:
           name: build-artifacts
 
       - name: Download app build
-        # Reuses the Next.js build produced by the test job — avoids rebuilding
-        # (~96s) in each of the 5 parallel shards (~8 min saved total).
+        # Reuses the Next.js build produced by prepare — avoids rebuilding
+        # (~96s) in each of the 15 parallel shards (~24 min saved total).
+        # distDir is .mercato/next (set in apps/mercato/next.config.ts).
         uses: actions/download-artifact@v4
         with:
           name: app-build
-          path: apps/mercato/.next/
+          path: apps/mercato/.mercato/next/
 
       - name: Cache Playwright browsers
         id: playwright-cache
@@ -463,7 +480,7 @@ jobs:
       - name: Run ephemeral integration tests with code coverage
         env:
           OM_INTEGRATION_APP_READY_TIMEOUT_SECONDS: '180'
-          OM_INTEGRATION_MODULES: ${{ needs.test.outputs.affected_modules }}
+          OM_INTEGRATION_MODULES: ${{ needs.prepare.outputs.affected_modules }}
         run: |
           SHARD_FLAG="${{ steps.shard-meta.outputs.shard_flag }}"
           if [ -n "$SHARD_FLAG" ]; then
@@ -545,13 +562,13 @@ jobs:
           if-no-files-found: ignore
 
   # ── Merge shard coverage ─────────────────────────────────────────────────────
-  # Runs after all 5 ephemeral-integration shards complete (push only).
-  # Downloads per-shard artifacts, merges coverage-summary.json files, and
-  # writes a combined report to the job summary.
+  # Final gate — runs after all integration shards AND the test job complete.
+  # Ensures both typecheck/units and integration must pass before reporting green.
+  # On push: downloads per-shard artifacts, merges coverage reports, writes summary.
   merge-coverage:
     runs-on: ubuntu-latest
-    needs: [test, ephemeral-integration]
-    if: needs.test.outputs.shard_matrix != '["none"]'
+    needs: [prepare, test, ephemeral-integration]
+    if: needs.prepare.outputs.shard_matrix != '["none"]'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -617,8 +634,8 @@ jobs:
           " "$SUMMARY_FILE"
 
   # ── Docker image builds ──────────────────────────────────────────────────────
-  # Validates all Dockerfiles build cleanly. Runs in parallel with
-  # 'ephemeral-integration' (both need test), so it does not add to wall time.
+  # Validates all Dockerfiles build cleanly. Runs after test, in parallel with
+  # merge-coverage, so it does not add to wall time.
   docker-build:
     runs-on: ubuntu-latest
     needs: test
