@@ -171,13 +171,19 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+      - name: Archive app build
+        # upload-artifact rejects filenames containing colons — Next.js chunk
+        # files include colons (e.g. [externals]_node:fs_promises_*.js).
+        # Tar the directory first so the artifact is a single clean file.
+        run: tar -czf app-build.tar.gz -C apps/mercato .mercato/next
+
       - name: Upload app build
         # Separate artifact so the test job (typecheck/unit tests) does not need
         # to download the large Next.js output unnecessarily.
         uses: actions/upload-artifact@v4
         with:
           name: app-build
-          path: apps/mercato/.mercato/next/
+          path: app-build.tar.gz
           retention-days: 1
           if-no-files-found: error
 
@@ -460,11 +466,14 @@ jobs:
       - name: Download app build
         # Reuses the Next.js build produced by prepare — avoids rebuilding
         # (~96s) in each of the 15 parallel shards (~24 min saved total).
-        # distDir is .mercato/next (set in apps/mercato/next.config.ts).
         uses: actions/download-artifact@v4
         with:
           name: app-build
-          path: apps/mercato/.mercato/next/
+
+      - name: Extract app build
+        # Restore the tarball into apps/mercato/ so .mercato/next/ exists
+        # at the path expected by the Next.js server.
+        run: tar -xzf app-build.tar.gz -C apps/mercato/
 
       - name: Cache Playwright browsers
         id: playwright-cache
