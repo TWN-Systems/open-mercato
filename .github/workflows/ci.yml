@@ -40,7 +40,7 @@ jobs:
       shard_matrix: ${{ steps.integration-scope.outputs.shard_matrix }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Fetch base branch for change detection
         # Needed so the scope step can diff against the PR base.
@@ -95,7 +95,7 @@ jobs:
           fi
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
 
@@ -103,7 +103,7 @@ jobs:
         run: corepack enable
 
       - name: Cache Yarn packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .yarn/cache
           key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
@@ -114,7 +114,7 @@ jobs:
         # when .yarn/cache hits — the extraction alone is ~85s. Caching node_modules
         # directly and skipping install on hit eliminates that cost.
         id: nm-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules
@@ -123,7 +123,7 @@ jobs:
           key: node-modules-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
 
       - name: Cache Turbo build outputs
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .turbo
           key: turbo-${{ runner.os }}-${{ github.sha }}
@@ -166,7 +166,7 @@ jobs:
         run: yarn build:app
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-artifacts
           path: |
@@ -187,7 +187,7 @@ jobs:
         # Separate artifact so the test job (typecheck/unit tests) does not need
         # to download the large Next.js output unnecessarily.
         if: steps.integration-scope.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: app-build
           path: app-build.tar.gz
@@ -200,10 +200,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
 
@@ -211,7 +211,7 @@ jobs:
         run: corepack enable
 
       - name: Cache Yarn packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .yarn/cache
           key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
@@ -221,7 +221,7 @@ jobs:
         # Keyed on yarn.lock — if the lockfile is unchanged the dependency
         # graph is identical and a prior passing audit is still valid.
         id: audit-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .audit-passed
           key: audit-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
@@ -231,7 +231,7 @@ jobs:
         # Shared key with other jobs — whichever runs first saves it.
         if: steps.audit-cache.outputs.cache-hit != 'true'
         id: nm-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules
@@ -258,10 +258,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
 
@@ -269,7 +269,7 @@ jobs:
         run: corepack enable
 
       - name: Cache Yarn packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .yarn/cache
           key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
@@ -277,7 +277,7 @@ jobs:
 
       - name: Cache node_modules
         id: nm-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules
@@ -301,14 +301,14 @@ jobs:
     needs: [prepare, audit, lint]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Fetch base branch for change detection
         if: github.event_name == 'pull_request'
         run: git fetch origin ${{ github.base_ref }} --depth=1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
 
@@ -316,7 +316,7 @@ jobs:
         run: corepack enable
 
       - name: Cache Yarn packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .yarn/cache
           key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
@@ -324,7 +324,7 @@ jobs:
 
       - name: Cache node_modules
         id: nm-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules
@@ -333,7 +333,7 @@ jobs:
           key: node-modules-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
 
       - name: Cache pip packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: pip-markitdown-v1
@@ -347,7 +347,7 @@ jobs:
         run: yarn install --immutable
 
       - name: Cache Turbo build outputs
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .turbo
           key: turbo-${{ runner.os }}-${{ github.sha }}
@@ -356,7 +356,7 @@ jobs:
             turbo-${{ runner.os }}-
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-artifacts
 
@@ -434,10 +434,10 @@ jobs:
           fi
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
 
@@ -445,7 +445,7 @@ jobs:
         run: corepack enable
 
       - name: Cache Yarn packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .yarn/cache
           key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
@@ -453,7 +453,7 @@ jobs:
 
       - name: Cache node_modules
         id: nm-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules
@@ -466,14 +466,14 @@ jobs:
         run: yarn install --immutable
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-artifacts
 
       - name: Download app build
         # Reuses the Next.js build produced by prepare — avoids rebuilding
         # (~96s) in each of the 15 parallel shards (~24 min saved total).
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: app-build
 
@@ -484,7 +484,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-v1.50.0
@@ -567,7 +567,7 @@ jobs:
 
       - name: Upload integration test artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.shard-meta.outputs.artifact_name }}
           path: |
@@ -587,15 +587,15 @@ jobs:
     if: needs.prepare.outputs.shard_matrix != '["none"]'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
 
       - name: Download shard artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: integration-test-results-*
           merge-multiple: true
@@ -670,7 +670,7 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
