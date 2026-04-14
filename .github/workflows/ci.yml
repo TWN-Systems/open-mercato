@@ -30,6 +30,8 @@ jobs:
   # Uploads two artifacts:
   #   build-artifacts  — packages/*/dist/ + generated files (needed by test)
   #   app-build        — apps/mercato/.mercato/next/ (needed by integration shards)
+  #                      Only uploaded when integration tests will actually run;
+  #                      skipped for CI/docs-only PRs to save ~2 min.
   prepare:
     runs-on: ubuntu-latest
     outputs:
@@ -158,6 +160,9 @@ jobs:
         # Build the Next.js app once here so all 15 integration shards can reuse
         # it — avoids ~96s x 15 = ~24 min of redundant per-shard rebuilds.
         # distDir is .mercato/next (set in apps/mercato/next.config.ts).
+        # Skipped for CI/docs-only PRs where integration is also skipped — no
+        # shard will download the artifact, so there is nothing to produce.
+        if: steps.integration-scope.outputs.skip != 'true'
         run: yarn build:app
 
       - name: Upload build artifacts
@@ -175,11 +180,13 @@ jobs:
         # upload-artifact rejects filenames containing colons — Next.js chunk
         # files include colons (e.g. [externals]_node:fs_promises_*.js).
         # Tar the directory first so the artifact is a single clean file.
+        if: steps.integration-scope.outputs.skip != 'true'
         run: tar -czf app-build.tar.gz -C apps/mercato .mercato/next
 
       - name: Upload app build
         # Separate artifact so the test job (typecheck/unit tests) does not need
         # to download the large Next.js output unnecessarily.
+        if: steps.integration-scope.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: app-build
@@ -643,15 +650,24 @@ jobs:
           " "$SUMMARY_FILE"
 
   # ── Docker image builds ──────────────────────────────────────────────────────
-  # Validates all Dockerfiles build cleanly. Runs after test, in parallel with
-  # merge-coverage, so it does not add to wall time.
+  # Validates all Dockerfiles build cleanly. Runs in parallel with test and
+  # integration — no longer sequenced after test — so it does not add to wall
+  # time on PRs where Docker rebuilds are fast (GHA cache hit).
+  #
+  # Skipped for CI/docs/scripts-only PRs (skip_integration == 'true'): those
+  # changes do not affect app source or Dockerfiles, so the Docker image is
+  # identical to the last build and there is nothing to validate. This avoids
+  # a 10+ min rebuild caused by Docker layer cache busting when files like
+  # turbo.json or scripts/ are the only things that changed.
   docker-build:
     runs-on: ubuntu-latest
-    needs: test
-    # Only run on non-fork PRs and direct pushes (forks don't have access to GHA cache)
+    needs: prepare
+    # Only run on non-fork PRs and direct pushes (forks don't have access to GHA cache).
+    # Also skip for CI/docs-only PRs — no app code changed, image is unchanged.
     if: |
-      github.event_name == 'push' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      needs.prepare.outputs.skip_integration != 'true' &&
+      (github.event_name == 'push' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

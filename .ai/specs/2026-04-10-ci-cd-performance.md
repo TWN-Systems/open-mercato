@@ -20,19 +20,25 @@ There are five GitHub Actions workflows. Each has a distinct purpose.
 
 ```
 prepare ──┐
-           ├──► test ──► ephemeral-integration ──► merge-coverage
-audit   ──┤         └──► docker-build
-lint    ──┘
+           ├──► test ──────────────────────────────► merge-coverage
+audit   ──┤                                              ▲
+lint    ──┘── ephemeral-integration (parallel) ──────────┘
+           └── docker-build (parallel, skipped for CI-only PRs)
 ```
+
+Key properties:
+- `docker-build` and `ephemeral-integration` both start the instant `prepare` finishes — they no longer wait for `test`.
+- For CI/docs/scripts-only PRs (`skip_integration == 'true'`): `ephemeral-integration`, `docker-build`, and the app build in `prepare` are all skipped. Wall time = `prepare` (no app build, ~2.5 min) + `test` (~4 min) = **~6.5 min**.
+- For module PRs: single shard runs in parallel with `test`; `docker-build` also runs in parallel.
 
 | Job | What it does | Why |
 |-----|-------------|-----|
-| `prepare` | Install deps, build all packages twice (before and after `generate`), upload `dist/` + `.mercato/generated/` as artifact | Packages must be compiled before any other job can typecheck or test them. The double build is required because `generate` produces TypeScript files that packages then import. |
+| `prepare` | Install deps, build all packages twice (before and after `generate`), upload `dist/` + `.mercato/generated/` artifact; also builds and uploads the Next.js app when integration tests will run | Packages must be compiled before any other job can typecheck or test them. The double build is required because `generate` produces TypeScript files that packages then import. App build is skipped for CI-only PRs since no integration shard will consume it. |
 | `audit` | Install deps, `yarn npm audit --severity high` | Security gate — run in parallel with `prepare` since it only needs `yarn.lock`, not built packages. |
 | `lint` | Install deps, run `yarn lint` (ESLint) | Fast static analysis — runs in parallel with `prepare`/`audit`, fails fast before heavy jobs. |
-| `test` | Download artifact, install markitdown, run dep-version check, i18n sync/usage check, `tsc --noEmit`, Jest unit tests, Next.js app build, upload app build artifact | Validates code correctness without a live server. Must run after `prepare` (needs compiled packages), `audit` (security gate), and `lint`. |
-| `ephemeral-integration` | Download artifacts (packages + app build), install Playwright, boot the full app in-process, run 311 Playwright spec files with `workers: 1` | End-to-end validation that modules interact correctly. Only runs when unit tests are green. App build is reused from `test` job — not rebuilt. |
-| `docker-build` | Build three Dockerfiles using GitHub Actions layer cache | Validates production images build cleanly. Runs in parallel with ephemeral-integration. Not on critical path. |
+| `test` | Download artifact, install markitdown, run dep-version check, i18n sync/usage check, `tsc --noEmit`, Jest unit tests | Validates code correctness without a live server. Must run after `prepare` (needs compiled packages), `audit` (security gate), and `lint`. |
+| `ephemeral-integration` | Download artifacts (packages + app build), install Playwright, boot the full app in-process, run Playwright specs | End-to-end validation that modules interact correctly. Starts in parallel with `test` — does not wait for unit tests. App build is shared from `prepare`. Skipped entirely for CI/docs/scripts-only PRs. |
+| `docker-build` | Build three Dockerfiles using GitHub Actions layer cache | Validates production images build cleanly. Runs in parallel with `test` and `ephemeral-integration`. Skipped for CI/docs-only PRs to avoid 10+ min rebuilds caused by Docker layer cache busting (e.g. when `turbo.json` or `scripts/` change without app code changes). |
 
 **Measured wall times (run 24178370484):**
 
@@ -555,6 +561,26 @@ GitHub-hosted `ubuntu-latest` runners are ephemeral — every job starts from a 
 2. Add `ENV NODE_OPTIONS="--max-old-space-size=4096"` to preview Dockerfile builder stage
 3. Pin Node version in CI: `node-version: '24.x'` → exact patch from `.nvmrc`
 4. Add `.nvmrc` with exact Node version used in production
+
+### Phase 5b — Docker-build decoupling and CI-only skip (current work)
+
+**Problem:** CI/infra-only PRs (touching only `turbo.json`, `scripts/`, `.github/`, `packages/cli/src/lib/testing/`) caused Docker layer cache to fully bust. The `docker-build` job then rebuilt the Next.js app from scratch inside Docker (~10 min) and ran sequentially after `test` — producing an 18 min wall time for a branch that never changed app code.
+
+**Root cause:** `turbo.json` sits in the first `COPY` layer of the Dockerfile (before `RUN yarn install`). Any change to it invalidates all subsequent layers, including the expensive `RUN yarn build` step.
+
+**Changes made:**
+
+1. **`docker-build: needs: prepare`** (was `needs: test`) — docker and test now run in parallel. For module PRs where Docker rebuilds (~10 min) this removes 4 min of wasted wait.
+
+2. **Skip `docker-build` when `skip_integration == 'true'`** — CI/docs/scripts-only PRs have `skip_integration=true`. These PRs have not changed any app source or Dockerfiles; the Docker image is functionally identical to the last build. Skipping saves 10+ min rebuild cost.
+
+3. **Skip app build in `prepare` when `skip_integration == 'true'`** — the Next.js build (95s) + tar + upload are unnecessary for CI-only PRs since no integration shard will consume the artifact. Saves ~2 min in the prepare job.
+
+4. **`.dockerignore` improvements** — added `**/testing/` (testing utilities like `packages/cli/src/lib/testing/`) and CI-only scripts (`scripts/merge-coverage.mjs`, `scripts/i18n-check-sync.ts`, `scripts/i18n-check-usage.ts`) to prevent these files from busting Docker layer cache in future PRs where they change alongside app code.
+
+**Result for CI-only PRs:**
+- Before: `prepare (4 min) → test (4 min) → docker-build (10 min)` = 18 min (sequential)
+- After: `prepare (2.5 min) → test (4 min)` = 6.5 min (docker-build skipped)
 
 ### Phase 6 — Self-hosted warm runners (deferred)
 
