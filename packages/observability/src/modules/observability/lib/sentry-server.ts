@@ -39,6 +39,17 @@ export function withTenantScope<T>(
   })
 }
 
+export function tagCurrentScope(scope: {
+  tenantId?: string
+  organizationId?: string
+  userId?: string
+}): void {
+  const s = Sentry.getCurrentScope()
+  if (scope.tenantId) s.setTag('tenant_id', scope.tenantId)
+  if (scope.organizationId) s.setTag('organization_id', scope.organizationId)
+  if (scope.userId) s.setUser({ id: scope.userId })
+}
+
 export function sentryInitialized(): boolean {
   return initialized
 }
