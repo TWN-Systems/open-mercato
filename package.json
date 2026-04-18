@@ -181,6 +181,6 @@
     "picomatch": "2.3.2",
     "protobufjs": "7.5.5",
     "yaml": "2.8.3",
-    "rollup": "4.40.0"
+    "rollup": "4.60.1"
   }
 }
