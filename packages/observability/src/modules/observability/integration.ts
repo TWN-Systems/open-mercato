@@ -23,7 +23,7 @@ export const posthogIntegration: IntegrationDefinition = {
   credentials: {
     fields: [
       { key: 'projectKey', label: 'Project API Key', type: 'secret', required: true, placeholder: 'phc_...', helpText: 'Project API key from PostHog project settings. Works for both cloud and self-hosted.' },
-      { key: 'host', label: 'Host', type: 'text', required: true, placeholder: 'https://us.i.posthog.com', helpText: 'PostHog API host. Cloud: us.i.posthog.com or eu.i.posthog.com. Self-hosted: your deployment URL.' },
+      { key: 'host', label: 'Host', type: 'url', required: true, placeholder: 'https://us.i.posthog.com', helpText: 'PostHog API host. Cloud: us.i.posthog.com or eu.i.posthog.com. Self-hosted: your deployment URL.' },
       { key: 'sessionRecording', label: 'Enable Session Recording', type: 'boolean', required: false, helpText: 'Records browser sessions for playback. Disabled by default.' },
     ],
   },
@@ -50,7 +50,7 @@ export const langfuseIntegration: IntegrationDefinition = {
     fields: [
       { key: 'publicKey', label: 'Public Key', type: 'text', required: true, placeholder: 'pk-lf-...', helpText: 'Langfuse project public key.' },
       { key: 'secretKey', label: 'Secret Key', type: 'secret', required: true, placeholder: 'sk-lf-...', helpText: 'Langfuse project secret key.' },
-      { key: 'host', label: 'Host', type: 'text', required: true, placeholder: 'https://cloud.langfuse.com', helpText: 'Langfuse API host. Use your self-hosted URL if applicable.' },
+      { key: 'host', label: 'Host', type: 'url', required: true, placeholder: 'https://cloud.langfuse.com', helpText: 'Langfuse API host. Use your self-hosted URL if applicable.' },
     ],
   },
   healthCheck: { service: 'langfuseHealthCheck' },
