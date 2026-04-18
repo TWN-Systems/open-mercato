@@ -28,7 +28,7 @@ export default function AdminShellObservability() {
         posthog.init(cfg.posthog.key, {
           api_host: cfg.posthog.host,
           autocapture: true,
-          session_recording: { enabled: cfg.posthog.sessionRecording ?? false },
+          disable_session_recording: !(cfg.posthog.sessionRecording ?? false),
           person_profiles: 'identified_only',
         })
       }
