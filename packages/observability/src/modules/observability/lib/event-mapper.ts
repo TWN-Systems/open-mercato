@@ -1,5 +1,22 @@
 import { scrub } from './redaction'
 
+export const DEFAULT_ALLOWLIST = [
+  'auth.user.loggedIn',
+  'sales.order.created',
+  'sales.quote.accepted',
+  'catalog.product.created',
+  'customers.person.created',
+  'integrations.state.updated',
+  'workflows.instance.completed',
+]
+
+export const DEFAULT_DENYLIST = [
+  'credentials',
+  'secret',
+  'password',
+  'integrations.log',
+]
+
 export type FilterConfig = { allowlist: string[]; denylist: string[] }
 export type CapturePayload = {
   distinctId: string
