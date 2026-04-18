@@ -1,3 +1,11 @@
+# Release Notes - Open Mercato (Unreleased)
+
+## Added
+
+- **`@open-mercato/observability` package** — PostHog, Langfuse, and Sentry as Integration Marketplace providers with cloud/self-hosted parity. Includes server event forwarding, admin + portal browser instrumentation, LLM tracing for the AI assistant via an additive `llmTracer` DI token, env-preset bootstrap, and per-tenant PII scrubbing.
+
+---
+
 # Release Notes - Open Mercato v0.4.3
 
 **Date:** April 11, 2026

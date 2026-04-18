@@ -1,0 +1,25 @@
+{
+  "module": {
+    "title": "Observability",
+    "description": "Product analytics, LLM tracing, and error monitoring."
+  },
+  "features": {
+    "observability.view": "View observability integrations",
+    "observability.manage": "Manage observability integrations",
+    "observability.credentials.manage": "Manage observability credentials"
+  },
+  "providers": {
+    "posthog": {
+      "title": "PostHog",
+      "description": "Product analytics with session replay."
+    },
+    "langfuse": {
+      "title": "Langfuse",
+      "description": "LLM observability for AI workflows."
+    },
+    "sentry": {
+      "title": "Sentry",
+      "description": "Error and performance monitoring."
+    }
+  }
+}

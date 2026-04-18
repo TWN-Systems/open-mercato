@@ -11,6 +11,8 @@ import {
   isProviderConfigured,
   type ChatProviderId,
 } from '../../lib/chat-config'
+import type { LLMTracer } from '../../lib/llm-tracer-types'
+import { noopTracer } from '../../lib/llm-tracer-types'
 
 export const openApi: OpenApiRouteDoc = {
   tag: 'AI Assistant',
@@ -138,10 +140,13 @@ export async function POST(req: NextRequest) {
 
     console.log('[AI Route] Calling generateObject with', modelWithProvider)
 
-    const result = await generateObject({
-      model,
-      schema: RouteResultSchema,
-      prompt: `You are a routing assistant. Given a user query, determine if they want to use a specific tool or have a general conversation.
+    let tracer: LLMTracer = noopTracer
+    try {
+      tracer = container.resolve<LLMTracer>('llmTracer')
+    } catch {
+      /* tracer not registered; use no-op */
+    }
+    const prompt = `You are a routing assistant. Given a user query, determine if they want to use a specific tool or have a general conversation.
 
 Available tools:
 ${toolList}
@@ -152,8 +157,30 @@ Respond with:
 - intent: "tool" if user wants to perform an action with a specific tool, "general_chat" otherwise
 - toolName: the exact tool name if intent is "tool"
 - confidence: 0-1 how confident you are
-- reasoning: brief explanation`,
-    })
+- reasoning: brief explanation`
+
+    const result = await tracer.traceLLM(
+      {
+        name: 'ai-assistant.route',
+        input: { query, availableTools },
+        tenantId: auth.tenantId ?? undefined,
+        userId: auth.userId ?? undefined,
+      },
+      async (ctx) => {
+        const res = await generateObject({
+          model,
+          schema: RouteResultSchema,
+          prompt,
+        })
+        ctx.recordGeneration({
+          name: 'route',
+          model: modelWithProvider,
+          input: { query, availableTools },
+          output: res.object,
+        })
+        return res
+      }
+    )
 
     console.log('[AI Route] Result:', result.object)
     return NextResponse.json(result.object)

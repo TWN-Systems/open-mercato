@@ -1,0 +1,25 @@
+{
+  "module": {
+    "title": "Obserwowalność",
+    "description": "Analityka produktowa, śledzenie LLM i monitoring błędów."
+  },
+  "features": {
+    "observability.view": "Przeglądanie integracji obserwowalności",
+    "observability.manage": "Zarządzanie integracjami obserwowalności",
+    "observability.credentials.manage": "Zarządzanie poświadczeniami obserwowalności"
+  },
+  "providers": {
+    "posthog": {
+      "title": "PostHog",
+      "description": "Analityka produktowa z nagrywaniem sesji."
+    },
+    "langfuse": {
+      "title": "Langfuse",
+      "description": "Obserwowalność LLM dla przepływów AI."
+    },
+    "sentry": {
+      "title": "Sentry",
+      "description": "Monitoring błędów i wydajności."
+    }
+  }
+}
